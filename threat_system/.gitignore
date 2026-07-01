@@ -1,0 +1,27 @@
+# Code-only tracking policy
+# Ignore everything by default
+*
+
+# Allow directory traversal for selective unignore rules
+!*/
+
+# Keep gitignore tracked
+!.gitignore
+
+# Allow Python source files
+!**/*.py
+
+# Allow dependency manifest used by code
+!requirements.txt
+
+# Always ignore local environment and runtime/generated artifacts
+threat_venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+results/
+collected_assets/
