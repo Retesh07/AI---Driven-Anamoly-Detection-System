@@ -13,6 +13,8 @@ scikit-learn>=1.3.0
 
 # Computer vision
 opencv-python>=4.8.0
+# Optional but recommended for stronger face backends like YuNet
+# opencv-contrib-python>=4.8.0
 
 # Visualization and plotting
 matplotlib>=3.7.0
