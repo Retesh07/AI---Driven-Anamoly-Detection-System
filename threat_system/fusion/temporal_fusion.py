@@ -86,7 +86,7 @@ class TemporalFusion:
         self.interaction_intensity_threshold = 0.3
     
     def process_frame(self, violence_results, weapon_results, loitering_results,
-                     person_positions, person_ids):
+                     person_positions, person_ids, identity_results=None):
         """
         Process frame and update threat assessments.
         
@@ -96,11 +96,13 @@ class TemporalFusion:
             loitering_results: Dict from LoiteringAnalyzer {tid: {...}}
             person_positions: Dict {tid: (x, y)} normalized positions
             person_ids: List of track IDs present this frame
+            identity_results: Optional {tid: identity metadata}
         
         Returns:
             Dict with fused threat assessments for each person
         """
         self.frame_count += 1
+        identity_results = identity_results or {}
         
         # ===== Update Person Histories =====
         for tid in person_ids:
@@ -193,6 +195,11 @@ class TemporalFusion:
                 'weapon_present': weapon_data.get('weapon_present', False),
                 'loitering_score': loitering_data.get('smooth_score', 0.0),
                 'loitering_detected': loitering_data.get('loitering_detected', False),
+                'identity_name': identity_results.get(tid, {}).get('identity_name', 'unknown'),
+                'identity_confidence': identity_results.get(tid, {}).get('identity_confidence', 0.0),
+                'is_known_family': identity_results.get(tid, {}).get('is_known_family', False),
+                'face_detected': identity_results.get(tid, {}).get('face_detected', False),
+                'suppress_loitering': identity_results.get(tid, {}).get('suppress_loitering', False),
                 'escalation_factor': escalation_factor,
                 'interaction_amplification': interaction_amplification,
                 'temporal_consistency': temporal_consistency,

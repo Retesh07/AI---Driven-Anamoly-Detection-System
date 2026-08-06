@@ -125,15 +125,19 @@ def generate_loitering_statistics_graph(timeline, output_path, title="Loitering 
     loitering_detected_frames = []
     loitering_scores = []
     persons_loitering = []
+    persons_suppressed = []
     
     for entry in timeline:
         frame_num = entry['frame']
         frames.append(frame_num)
         
         loitering_count = 0
+        suppressed_count = 0
         max_loitering_score = 0.0
         
         for person in entry.get('persons', []):
+            if person.get('loitering_suppressed', False):
+                suppressed_count += 1
             if person.get('loitering_detected', False):
                 loitering_count += 1
                 max_loitering_score = max(max_loitering_score, person.get('loitering_score', 0.0))
@@ -141,6 +145,7 @@ def generate_loitering_statistics_graph(timeline, output_path, title="Loitering 
         loitering_detected_frames.append(loitering_count > 0)
         loitering_scores.append(max_loitering_score)
         persons_loitering.append(loitering_count)
+        persons_suppressed.append(suppressed_count)
     
     # Create figure with multiple subplots
     fig, axes = plt.subplots(3, 1, figsize=(14, 10))
@@ -188,12 +193,17 @@ def generate_loitering_statistics_graph(timeline, output_path, title="Loitering 
     
     # Bar chart of person count loitering
     colors = ['purple' if count > 0 else 'lightgray' for count in persons_loitering]
-    ax3.bar(frames, persons_loitering, color=colors, alpha=0.6, width=1)
+    ax3.bar(frames, persons_loitering, color=colors, alpha=0.6, width=1, label='Active Loitering')
+    if any(persons_suppressed):
+        ax3.bar(frames, persons_suppressed, color='green', alpha=0.25, width=1,
+                bottom=persons_loitering, label='Suppressed Known Family')
     ax3.set_xlim(frames[0], frames[-1])
-    ax3.set_ylim(0, max(persons_loitering) + 1 if persons_loitering else 1)
+    ax3.set_ylim(0, max((a + b) for a, b in zip(persons_loitering, persons_suppressed)) + 1 if persons_loitering else 1)
     ax3.set_xlabel('Frame')
     ax3.set_ylabel('Number of Persons Loitering')
     ax3.set_title('Person Count - Loitering Activity')
+    if any(persons_suppressed):
+        ax3.legend(loc='upper right')
     ax3.grid(True, alpha=0.2, axis='y')
     
     plt.tight_layout()

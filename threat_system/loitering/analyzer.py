@@ -52,18 +52,20 @@ class LoiteringAnalyzer:
         self.loitering_ema = defaultdict(float)  # EMA loitering score
         self.centroid_trace = defaultdict(lambda: deque(maxlen=30))    # Last 30 centroids
     
-    def update(self, person_bboxes, frame_shape=(480, 640)):
+    def update(self, person_bboxes, frame_shape=(480, 640), identity_info=None):
         """
         Update loitering state.
         
         Args:
             person_bboxes: Dict of {track_id: [x1, y1, x2, y2]} (pixel coordinates)
             frame_shape: (H, W)
+            identity_info: Optional dict of {track_id: identity metadata}
         
         Returns:
             Dict of {track_id: loitering_info}
         """
         H, W = frame_shape
+        identity_info = identity_info or {}
         
         person_results = {}
         
@@ -106,15 +108,23 @@ class LoiteringAnalyzer:
                 alpha * loitering_score + (1 - alpha) * self.loitering_ema[tid]
             )
             
+            identity = identity_info.get(tid, {})
+            is_known_family = bool(identity.get('is_known_family', False))
+
             person_results[tid] = {
                 'dwell_time_s': dwell_time,
                 'movement_radius': movement_radius,
                 'velocity_consistency': velocity_consistency,
                 'path_entropy': path_entropy,
                 'instant_score': loitering_score,
-                'smooth_score': self.loitering_ema[tid],
-                'loitering_detected': self.loitering_ema[tid] > 0.6,
-                'high_confidence': self.loitering_ema[tid] > 0.8
+                'smooth_score': 0.0 if is_known_family else self.loitering_ema[tid],
+                'raw_smooth_score': self.loitering_ema[tid],
+                'loitering_detected': False if is_known_family else self.loitering_ema[tid] > 0.6,
+                'high_confidence': False if is_known_family else self.loitering_ema[tid] > 0.8,
+                'loitering_suppressed': is_known_family,
+                'identity_name': identity.get('identity_name', 'unknown'),
+                'identity_confidence': identity.get('identity_confidence', 0.0),
+                'known_family': is_known_family,
             }
         
         return person_results

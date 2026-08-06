@@ -3,7 +3,7 @@ Unified inference pipeline - orchestrates all modules.
 
 Pipeline flow:
     Video → Frame extraction → Tracking → Violence → Weapon → Loitering
-    → Fusion → Visualization → Output
+    → Face Identity → Fusion → Visualization → Output
 """
 
 import os
@@ -35,6 +35,7 @@ from violence.model import ViolenceDetectorV3
 from violence.detector import ViolenceDetector
 from weapon.detector import WeaponDetector
 from loitering.analyzer import LoiteringAnalyzer
+from identity.recognizer import FaceIdentityRecognizer
 from fusion.temporal_fusion import TemporalFusion
 
 try:
@@ -49,7 +50,7 @@ class ThreatDetectionPipeline:
     Complete threat detection system combining all modules.
     """
     
-    def __init__(self, project_root, device='cuda', verbose=True):
+    def __init__(self, project_root, device='cuda', verbose=True, face_db_path=None):
         """
         Initialize pipeline with all sub-modules.
         
@@ -61,6 +62,7 @@ class ThreatDetectionPipeline:
         self.project_root = Path(project_root)
         self.device = device
         self.verbose = verbose
+        self.face_db_path = Path(face_db_path) if face_db_path else self.project_root / constants.FACE_DB_PATH
         
         if self.verbose:
             print('[Pipeline] Loading models...')
@@ -100,6 +102,12 @@ class ThreatDetectionPipeline:
         
         # ===== Load Loitering Analyzer =====
         self.loitering_analyzer = LoiteringAnalyzer()
+
+        # ===== Load Face Identity Recognizer =====
+        self.face_recognizer = FaceIdentityRecognizer(
+            database_dir=self.face_db_path,
+            verbose=self.verbose
+        )
         
         # ===== Load Fusion Engine =====
         # Using TemporalFusion (v3.0) for superior threat assessment
@@ -163,6 +171,7 @@ class ThreatDetectionPipeline:
         self.violence_detector.reset()
         self.weapon_detector.reset()
         self.loitering_analyzer.reset()
+        self.face_recognizer.reset()
         self.tracker.reset()
         self.person_tracker.reset()
         
@@ -221,6 +230,9 @@ class ThreatDetectionPipeline:
                 
                 # ===== Get Person Bboxes =====
                 person_bboxes = {info['tid']: info['bbox'] for info in det_info}
+
+                # ===== Face Identity Recognition =====
+                identity_results = self.face_recognizer.update(frame, person_bboxes)
                 
                 # ===== Violence Detection =====
                 num_persons = len(det_info)
@@ -235,7 +247,7 @@ class ThreatDetectionPipeline:
                 
                 # ===== Loitering Analysis =====
                 loitering_results = self.loitering_analyzer.update(
-                    person_bboxes, frame_shape=(H, W)
+                    person_bboxes, frame_shape=(H, W), identity_info=identity_results
                 )
                 
                 # ===== Fusion =====
@@ -251,7 +263,7 @@ class ThreatDetectionPipeline:
                 # Call TemporalFusion with proper parameters
                 fused_results, interactions = self.fusion.process_frame(
                     violence_result, weapon_results, loitering_results,
-                    person_positions, list(person_bboxes.keys())
+                    person_positions, list(person_bboxes.keys()), identity_results=identity_results
                 )
                 
                 # ===== Visualization =====
@@ -264,7 +276,7 @@ class ThreatDetectionPipeline:
                 elif any(p['threat_level'] == 'MEDIUM' for p in fused_results.values()):
                     overall_threat_level = 'MEDIUM'
                 
-                draw_enhanced_detections(frame, det_info, pose_result, fused_results, None)
+                draw_enhanced_detections(frame, det_info, pose_result, fused_results, identity_results)
                 draw_enhanced_hud(frame, {
                     'raw': violence_result['raw_prob'],
                     'smooth': violence_result['smooth_prob'],
@@ -307,6 +319,11 @@ class ThreatDetectionPipeline:
                         'weapon_present': results['weapon_present'],
                         'weapon_type': weapon_type,
                         'loitering_detected': results['loitering_detected'],
+                        'loitering_suppressed': results.get('suppress_loitering', False),
+                        'identity_name': results.get('identity_name', 'unknown'),
+                        'identity_confidence': results.get('identity_confidence', 0.0),
+                        'is_known_family': results.get('is_known_family', False),
+                        'face_detected': results.get('face_detected', False),
                         'escalation_factor': round(results.get('escalation_factor', 1.0), 4),
                         'temporal_consistency': round(results.get('temporal_consistency', 0.0), 4),
                         'threat_trend': round(results.get('threat_trend', 0.0), 4),
@@ -417,6 +434,8 @@ class ThreatDetectionPipeline:
                            if t['violence']['status'] == 'WARNING')
         alert_frames = sum(1 for t in timeline 
                           if any(p['alerts'] for p in t['persons']))
+        known_family_frames = sum(1 for t in timeline 
+                      if any(p.get('is_known_family', False) for p in t['persons']))
         
         results = {
             'input_video': str(video_path),
@@ -435,6 +454,7 @@ class ThreatDetectionPipeline:
                 'violence_frames': violence_frames,
                 'warning_frames': warning_frames,
                 'alert_frames': alert_frames,
+                'known_family_frames': known_family_frames,
                 'violence_percentage': round(violence_frames / processed * 100, 2),
                 'avg_fps': round(len(frame_times) / sum(frame_times) if frame_times else 0, 1),
                 'total_time_s': round(sum(frame_times), 2)

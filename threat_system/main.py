@@ -44,6 +44,10 @@ Examples:
                        help='Violence detection threshold (default: calibrated)')
     parser.add_argument('--warning-threshold', type=float, default=None,
                        help='Warning threshold (default: calibrated)')
+
+    # Face identity options
+    parser.add_argument('--face-db', type=str, default=None,
+                       help='Folder containing enrolled family face images')
     
     # GPU options
     parser.add_argument('--gpu', action='store_true', help='Use GPU (default: auto-detect)')
@@ -71,7 +75,8 @@ Examples:
         pipeline = ThreatDetectionPipeline(
             project_root=Path(__file__).parent,
             device=device,
-            verbose=args.verbose
+            verbose=args.verbose,
+            face_db_path=args.face_db
         )
     except Exception as e:
         print(f'[ERROR] Failed to initialize pipeline: {e}')
