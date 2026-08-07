@@ -155,7 +155,7 @@ class TemporalFusion:
                 if inter_key in interactions:
                     inter = interactions[inter_key]
                     if inter.interaction_intensity > self.interaction_intensity_threshold:
-                        interaction_amplification += inter.threat_amplification
+                        interaction_amplification += inter.threat_amplification - 1.0
                         interacting_ids.append(other_tid)
             
             # ===== Threat Escalation Detection =====
@@ -241,7 +241,7 @@ class TemporalFusion:
                     vel1 = np.array(h1.position_history[-1]) - np.array(h1.position_history[-2])
                     vel2 = np.array(h2.position_history[-1]) - np.array(h2.position_history[-2])
                     rel_pos = pos1 - pos2
-                    approach_rate = float(np.dot(vel1 - vel2, rel_pos / (distance + 1e-6)))
+                    approach_rate = -float(np.dot(vel1 - vel2, rel_pos / (distance + 1e-6)))
                 
                 # Compute interaction intensity
                 is_close = distance < self.distance_threshold

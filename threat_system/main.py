@@ -10,6 +10,7 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+import torch
 from pipeline import ThreatDetectionPipeline
 
 
@@ -64,7 +65,7 @@ Examples:
     elif args.gpu:
         device = 'cuda'
     else:
-        device = 'cuda'  # Auto-detect, default to CUDA
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     if args.verbose:
         print(f'[Main] Device: {device}')
@@ -97,9 +98,9 @@ Examples:
             return 0
         
         elif args.webcam:
-            print('[Error] Webcam mode not yet implemented')
-            print('[Hint] Modify pipeline.py to support live capture')
-            return 1
+            pipeline.process_video(video_path=0, output_dir=args.output, export_json=True)
+            print(f'\n[Success] Results saved to: {args.output}')
+            return 0
     
     except KeyboardInterrupt:
         print('\\n[Interrupted] Processing stopped by user')

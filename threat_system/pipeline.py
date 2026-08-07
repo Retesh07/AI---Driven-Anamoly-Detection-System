@@ -6,9 +6,9 @@ Pipeline flow:
     → Face Identity → Fusion → Visualization → Output
 """
 
-import os
 import cv2
 import json
+import subprocess
 import time
 import shutil
 import numpy as np
@@ -66,6 +66,14 @@ class ThreatDetectionPipeline:
         
         if self.verbose:
             print('[Pipeline] Loading models...')
+
+        required_models = [
+            self.project_root / constants.MODEL_PATHS[key]
+            for key in ('violence', 'violence_mean', 'violence_std', 'weapon')
+        ]
+        missing_models = [str(path) for path in required_models if not path.is_file()]
+        if missing_models:
+            raise FileNotFoundError('Missing required model files:\n  ' + '\n  '.join(missing_models))
         
         # ===== Load YOLO Pose (shared) =====
         # Try local model first, then allow YOLO to download if needed
@@ -106,6 +114,7 @@ class ThreatDetectionPipeline:
         # ===== Load Face Identity Recognizer =====
         self.face_recognizer = FaceIdentityRecognizer(
             database_dir=self.face_db_path,
+            model_dir=self.project_root / constants.FACE_MODEL_DIR,
             verbose=self.verbose
         )
         
@@ -140,20 +149,21 @@ class ThreatDetectionPipeline:
             Dict with processing results and timeline
         """
         
-        video_path = Path(video_path)
-        if not video_path.exists():
-            raise FileNotFoundError(f"Video not found: {video_path}")
+        is_stream = isinstance(video_path, int) or str(video_path).lower().startswith(('rtsp://', 'http://', 'https://'))
+        video_source = video_path if isinstance(video_path, int) else str(video_path)
+        if not is_stream and not Path(video_source).exists():
+            raise FileNotFoundError(f"Video not found: {video_source}")
         
         if output_dir is None:
-            output_dir = video_path.parent
+            output_dir = Path(video_source).parent if not is_stream else Path('./results')
         else:
             output_dir = Path(output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
         
         # ===== Open Video =====
-        cap = cv2.VideoCapture(str(video_path))
+        cap = cv2.VideoCapture(video_source)
         if not cap.isOpened():
-            raise RuntimeError(f"Cannot open video: {video_path}")
+            raise RuntimeError(f"Cannot open video: {video_source}")
         
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -164,14 +174,18 @@ class ThreatDetectionPipeline:
             print(f'[Pipeline] Input: {W}x{H} @ {fps:.1f}fps, {total_frames} frames')
         
         # ===== Set Thresholds =====
-        if violence_threshold is not None:
-            self.violence_detector.set_thresholds(violence_threshold, warning_threshold or 0.45)
+        if violence_threshold is not None or warning_threshold is not None:
+            self.violence_detector.set_thresholds(
+                self.violence_detector.violence_threshold if violence_threshold is None else violence_threshold,
+                self.violence_detector.warning_threshold if warning_threshold is None else warning_threshold,
+            )
         
         # ===== Initialize State =====
         self.violence_detector.reset()
         self.weapon_detector.reset()
         self.loitering_analyzer.reset()
         self.face_recognizer.reset()
+        self.fusion.reset()
         self.tracker.reset()
         self.person_tracker.reset()
         
@@ -181,8 +195,12 @@ class ThreatDetectionPipeline:
         
         # Adjust FPS for frame skipping
         output_fps = fps / constants.FRAME_SKIP
+        self.loitering_analyzer.fps = max(output_fps, 1e-6)
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         writer = cv2.VideoWriter(str(temp_video), fourcc, output_fps, (W, H))
+        if not writer.isOpened():
+            cap.release()
+            raise RuntimeError(f'Cannot create output video: {temp_video}')
         
         # ===== Processing Loop =====
         frame_idx = 0
@@ -348,22 +366,18 @@ class ThreatDetectionPipeline:
         if temp_video.exists():
             try:
                 # Try ffmpeg re-encoding for better compression if available
-                import shutil
                 if self.verbose:
                     print('[Pipeline] Finalizing video...')
-                result = os.system(f'ffmpeg -y -loglevel error -i {temp_video} -vcodec libx264 -crf 22 -preset fast {output_video}')
-                if result == 0:
-                    temp_video.unlink()
-                else:
-                    # FFmpeg failed, use temp video directly
-                    if output_video.exists():
-                        output_video.unlink()
-                    shutil.move(str(temp_video), str(output_video))
-            except:
+                subprocess.run([
+                    'ffmpeg', '-y', '-loglevel', 'error', '-i', str(temp_video),
+                    '-vcodec', 'libx264', '-crf', '22', '-preset', 'fast', str(output_video),
+                ], check=True)
+                temp_video.unlink()
+            except (FileNotFoundError, subprocess.CalledProcessError):
                 # Fallback: just rename temp file
                 if output_video.exists():
                     output_video.unlink()
-                temp_video.rename(output_video)
+                shutil.move(str(temp_video), str(output_video))
         
         if self.verbose:
             print(f'[Pipeline] Video saved: {output_video}')
@@ -434,11 +448,11 @@ class ThreatDetectionPipeline:
                            if t['violence']['status'] == 'WARNING')
         alert_frames = sum(1 for t in timeline 
                           if any(p['alerts'] for p in t['persons']))
-        known_family_frames = sum(1 for t in timeline 
+        known_family_frames = sum(1 for t in timeline
                       if any(p.get('is_known_family', False) for p in t['persons']))
         
         results = {
-            'input_video': str(video_path),
+            'input_video': str(video_source),
             'output_video': str(output_video),
             'timeline_json': str(json_path if export_json else None),
             'timeline_plot': str(timeline_viz_path),
@@ -455,7 +469,7 @@ class ThreatDetectionPipeline:
                 'warning_frames': warning_frames,
                 'alert_frames': alert_frames,
                 'known_family_frames': known_family_frames,
-                'violence_percentage': round(violence_frames / processed * 100, 2),
+                'violence_percentage': round(violence_frames / processed * 100, 2) if processed else 0.0,
                 'avg_fps': round(len(frame_times) / sum(frame_times) if frame_times else 0, 1),
                 'total_time_s': round(sum(frame_times), 2)
             },

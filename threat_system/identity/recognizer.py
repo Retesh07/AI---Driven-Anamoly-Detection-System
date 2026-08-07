@@ -221,7 +221,7 @@ def load_template_cache(database_dir):
         return None
 
     try:
-        payload = np.load(str(cache_path), allow_pickle=True)
+        payload = np.load(str(cache_path), allow_pickle=False)
         names = [str(name) for name in payload['names'].tolist()]
         templates = payload['templates']
         if len(names) != len(templates):
@@ -240,7 +240,7 @@ def save_template_cache(database_dir, templates):
     database_dir.mkdir(parents=True, exist_ok=True)
     cache_path = database_dir / FACE_EMBEDDINGS_CACHE
 
-    names = np.array(list(templates.keys()), dtype=object)
+    names = np.array(list(templates.keys()), dtype=str)
     vectors = np.stack([np.asarray(template, dtype=np.float32) for template in templates.values()], axis=0)
     np.savez_compressed(str(cache_path), names=names, templates=vectors)
     return cache_path
@@ -276,7 +276,7 @@ class FaceIdentityRecognizer:
 
     def __init__(self, database_dir=None, threshold=FACE_RECOGNITION_THRESHOLD,
                  smoothing_window=FACE_SMOOTHING_WINDOW, min_face_size=FACE_MIN_FACE_SIZE,
-                 fallback_enabled=FACE_FALLBACK_ENABLED, verbose=False):
+                 fallback_enabled=FACE_FALLBACK_ENABLED, model_dir=None, verbose=False):
         self.database_dir = Path(database_dir or FACE_DB_PATH)
         self.threshold = threshold
         self.smoothing_window = smoothing_window
@@ -286,7 +286,7 @@ class FaceIdentityRecognizer:
 
         cascade_path = Path(cv2.data.haarcascades) / 'haarcascade_frontalface_default.xml'
         self.face_cascade = cv2.CascadeClassifier(str(cascade_path))
-        self.face_model_dir = Path(FACE_MODEL_DIR)
+        self.face_model_dir = Path(model_dir or FACE_MODEL_DIR)
         self.detector_backend = FACE_DETECTOR_BACKEND.lower()
         self.yunet_detector = self._create_yunet_detector()
 
@@ -422,8 +422,7 @@ class FaceIdentityRecognizer:
         support = sum(1 for item in history if item.name == candidate.name)
         average_conf = float(np.mean([item.confidence for item in history if item.name == candidate.name]))
         average_similarity = float(np.mean([item.similarity for item in history if item.name == candidate.name]))
-        return (
-            support >= 2 or
+        return support >= self.confirmation_frames and (
             average_conf >= self.threshold + self.known_margin or
             average_similarity >= self.threshold + self.known_margin
         )
@@ -510,6 +509,10 @@ class FaceIdentityRecognizer:
         quality_score = estimate_face_quality(face_crop)
         if quality_score < 0.15:
             return IdentityMatch(face_detected=face_detected, face_bbox=face_bbox, quality_score=quality_score, backend=self._active_backend_name())
+
+        # Never suppress a security signal from a guessed upper-body crop.
+        if not face_detected:
+            return IdentityMatch(face_bbox=face_bbox, quality_score=quality_score, backend=self._active_backend_name())
 
         embedding = self._compute_embedding(face_crop)
         if embedding is None or not self.identity_templates:

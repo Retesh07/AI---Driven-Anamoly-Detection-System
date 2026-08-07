@@ -228,7 +228,9 @@ def enroll_faces(source_dir, output_dir, overwrite=False, min_face_size=48):
                 record_skip('exists')
                 continue
 
-            cv2.imwrite(str(destination), resized)
+            if not cv2.imwrite(str(destination), resized):
+                record_skip('write_failed')
+                continue
             enrolled_count += 1
             summary['faces_enrolled'] += 1
 
