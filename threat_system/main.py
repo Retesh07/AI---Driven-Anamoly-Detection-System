@@ -10,6 +10,7 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+import torch
 from pipeline import ThreatDetectionPipeline
 
 
@@ -44,6 +45,10 @@ Examples:
                        help='Violence detection threshold (default: calibrated)')
     parser.add_argument('--warning-threshold', type=float, default=None,
                        help='Warning threshold (default: calibrated)')
+
+    # Face identity options
+    parser.add_argument('--face-db', type=str, default=None,
+                       help='Folder containing enrolled family face images')
     
     # GPU options
     parser.add_argument('--gpu', action='store_true', help='Use GPU (default: auto-detect)')
@@ -60,7 +65,7 @@ Examples:
     elif args.gpu:
         device = 'cuda'
     else:
-        device = 'cuda'  # Auto-detect, default to CUDA
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     if args.verbose:
         print(f'[Main] Device: {device}')
@@ -71,7 +76,8 @@ Examples:
         pipeline = ThreatDetectionPipeline(
             project_root=Path(__file__).parent,
             device=device,
-            verbose=args.verbose
+            verbose=args.verbose,
+            face_db_path=args.face_db
         )
     except Exception as e:
         print(f'[ERROR] Failed to initialize pipeline: {e}')
@@ -92,9 +98,9 @@ Examples:
             return 0
         
         elif args.webcam:
-            print('[Error] Webcam mode not yet implemented')
-            print('[Hint] Modify pipeline.py to support live capture')
-            return 1
+            pipeline.process_video(video_path=0, output_dir=args.output, export_json=True)
+            print(f'\n[Success] Results saved to: {args.output}')
+            return 0
     
     except KeyboardInterrupt:
         print('\\n[Interrupted] Processing stopped by user')

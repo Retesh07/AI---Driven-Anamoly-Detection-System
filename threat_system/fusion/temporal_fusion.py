@@ -86,7 +86,7 @@ class TemporalFusion:
         self.interaction_intensity_threshold = 0.3
     
     def process_frame(self, violence_results, weapon_results, loitering_results,
-                     person_positions, person_ids):
+                     person_positions, person_ids, identity_results=None):
         """
         Process frame and update threat assessments.
         
@@ -96,11 +96,13 @@ class TemporalFusion:
             loitering_results: Dict from LoiteringAnalyzer {tid: {...}}
             person_positions: Dict {tid: (x, y)} normalized positions
             person_ids: List of track IDs present this frame
+            identity_results: Optional {tid: identity metadata}
         
         Returns:
             Dict with fused threat assessments for each person
         """
         self.frame_count += 1
+        identity_results = identity_results or {}
         
         # ===== Update Person Histories =====
         for tid in person_ids:
@@ -153,7 +155,7 @@ class TemporalFusion:
                 if inter_key in interactions:
                     inter = interactions[inter_key]
                     if inter.interaction_intensity > self.interaction_intensity_threshold:
-                        interaction_amplification += inter.threat_amplification
+                        interaction_amplification += inter.threat_amplification - 1.0
                         interacting_ids.append(other_tid)
             
             # ===== Threat Escalation Detection =====
@@ -172,7 +174,9 @@ class TemporalFusion:
             # ===== Threat Classification =====
             threat_level = self._classify_threat(
                 violence, weapon_data, loitering_data,
-                escalation_factor, fused_score
+                escalation_factor, fused_score,
+                violence_confirmed=bool(violence_results.get('confirmed', False)),
+                violence_status=violence_results.get('status', 'NORMAL'),
             )
             
             # ===== Apply Persistent Threat Tracking =====
@@ -193,6 +197,14 @@ class TemporalFusion:
                 'weapon_present': weapon_data.get('weapon_present', False),
                 'loitering_score': loitering_data.get('smooth_score', 0.0),
                 'loitering_detected': loitering_data.get('loitering_detected', False),
+                'behavior_label': self._classify_behavior(
+                    violence_results, weapon_data, loitering_data
+                ),
+                'identity_name': identity_results.get(tid, {}).get('identity_name', 'unknown'),
+                'identity_confidence': identity_results.get(tid, {}).get('identity_confidence', 0.0),
+                'is_known_family': identity_results.get(tid, {}).get('is_known_family', False),
+                'face_detected': identity_results.get(tid, {}).get('face_detected', False),
+                'suppress_loitering': identity_results.get(tid, {}).get('suppress_loitering', False),
                 'escalation_factor': escalation_factor,
                 'interaction_amplification': interaction_amplification,
                 'temporal_consistency': temporal_consistency,
@@ -234,7 +246,7 @@ class TemporalFusion:
                     vel1 = np.array(h1.position_history[-1]) - np.array(h1.position_history[-2])
                     vel2 = np.array(h2.position_history[-1]) - np.array(h2.position_history[-2])
                     rel_pos = pos1 - pos2
-                    approach_rate = float(np.dot(vel1 - vel2, rel_pos / (distance + 1e-6)))
+                    approach_rate = -float(np.dot(vel1 - vel2, rel_pos / (distance + 1e-6)))
                 
                 # Compute interaction intensity
                 is_close = distance < self.distance_threshold
@@ -385,7 +397,8 @@ class TemporalFusion:
         
         return float(np.clip(final_score, 0.0, 1.0))
     
-    def _classify_threat(self, violence, weapon_data, loitering_data, escalation, fused_score):
+    def _classify_threat(self, violence, weapon_data, loitering_data, escalation, fused_score,
+                         violence_confirmed=False, violence_status='NORMAL'):
         """
         Classify threat level with temporal and interaction context.
         
@@ -402,15 +415,15 @@ class TemporalFusion:
         
         # ===== CRITICAL (Highest Priority) =====
         # Gun/knife + extreme violence = imminent threat
-        if weapon_present and weapon_type in ['gun', 'knife'] and violence > 0.5:
+        if weapon_present and weapon_type in ['gun', 'knife'] and violence_confirmed and violence > 0.5:
             return ThreatLevel.CRITICAL
         
         # Extreme violence with any weapon
-        if violence > 0.75 and weapon_present:
+        if violence_confirmed and violence > 0.75 and weapon_present:
             return ThreatLevel.CRITICAL
         
         # Very high violence alone
-        if violence > 0.85:
+        if violence_confirmed and violence > 0.85:
             return ThreatLevel.CRITICAL
         
         # ===== HIGH (ARMED + VIOLENT = DANGEROUS) =====
@@ -423,11 +436,11 @@ class TemporalFusion:
             return ThreatLevel.HIGH
         
         # High violence (even without weapon)
-        if violence > 0.7:
+        if violence_confirmed and violence > 0.7:
             return ThreatLevel.HIGH
         
         # Moderate-high violence alone
-        if violence > 0.65:
+        if violence_confirmed and violence > 0.65:
             return ThreatLevel.HIGH
         
         # ===== MEDIUM =====
@@ -436,12 +449,12 @@ class TemporalFusion:
             return ThreatLevel.MEDIUM
         
         # Moderate violence alone
-        if violence > 0.6:
+        if violence_confirmed and violence > 0.6:
             return ThreatLevel.MEDIUM
         
         # ===== LOW =====
         # Minor-moderate violence
-        if violence > 0.45:
+        if violence_status == 'WARNING':
             return ThreatLevel.LOW
         
         # Loitering detected (without weapon)
@@ -449,11 +462,22 @@ class TemporalFusion:
             return ThreatLevel.LOW
         
         # Fused score indicates some concern
-        if fused_score > 0.4:
+        if fused_score > 0.4 and (violence_confirmed or weapon_present or loitering_detected):
             return ThreatLevel.LOW
         
         # ===== NORMAL =====
         return ThreatLevel.NORMAL
+
+    @staticmethod
+    def _classify_behavior(violence_results, weapon_data, loitering_data):
+        """Return only in-scope surveillance behavior labels."""
+        if violence_results.get('confirmed', False):
+            return 'VIOLENCE'
+        if loitering_data.get('loitering_detected', False):
+            return 'SUSPICIOUS_LOITERING'
+        if weapon_data.get('weapon_present', False) or violence_results.get('status') == 'WARNING':
+            return 'SUSPICIOUS'
+        return 'NORMAL'
     
     def _apply_persistent_threat_tracking(self, tid, computed_threat_level, history):
         """
@@ -523,7 +547,7 @@ class TemporalFusion:
             'violence_max_recent': float(max(violence_history)) if violence_history else 0.0,
             'weapon_count_recent': sum(1 for w in weapon_history if w > 0.5),
             'sustained_violent': all(v > 0.5 for v in violence_history[-3:]) if len(violence_history) >= 3 else False,
-            'approaching': violence_results.get('inter_features', {}).get('approach_vel', 0) > 0.05,
+            'approaching': violence_results.get('inter_features', {}).get('approach_vel', 0) < -0.05,
             'close_proximity': violence_results.get('inter_features', {}).get('bbox_iou', 0) > 0.2,
         }
         

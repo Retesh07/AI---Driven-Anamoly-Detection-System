@@ -2,6 +2,7 @@
 import json
 import subprocess
 import os
+import sys
 
 videos = ['weapon.mp4', 'f1.mp4', 'f2.mp4', 'loitering.mp4']
 
@@ -12,8 +13,14 @@ for video in videos:
     if os.path.exists('results/output.json'):
         os.remove('results/output.json')
     
-    subprocess.run(f'python main.py --video {video} --output results', 
-                  shell=True, capture_output=True, timeout=120)
+    try:
+        subprocess.run(
+            [sys.executable, 'main.py', '--video', video, '--output', 'results'],
+            check=True, capture_output=True, timeout=120,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        print(f'{video:20} FAIL: {exc}')
+        continue
     
     with open('results/output.json') as f:
         data = json.load(f)

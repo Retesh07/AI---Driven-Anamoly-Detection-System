@@ -281,6 +281,9 @@ def draw_enhanced_detections(frame, det_info, result, fused_results, timeline_en
         loitering_detected = threat_data['loitering_detected']
         threat_level = threat_data['threat_level']
         fused_score = threat_data['fused_score']
+        identity_name = threat_data.get('identity_name', 'unknown')
+        identity_confidence = threat_data.get('identity_confidence', 0.0)
+        is_known_family = threat_data.get('is_known_family', False)
         
         # Determine color based on threat type
         box_color = get_threat_color(violence_score, weapon_present, loitering_detected)
@@ -290,7 +293,8 @@ def draw_enhanced_detections(frame, det_info, result, fused_results, timeline_en
         cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3, cv2.LINE_AA)
         
         # Draw LARGER threat level label with better contrast
-        label_text = f"P#{tid} [{threat_data['threat_level']}]"
+        identity_label = identity_name if is_known_family else 'Unknown'
+        label_text = f"P#{tid} [{threat_data['threat_level']}] {identity_label}"
         label_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_DUPLEX, 0.7, 2)[0]
         label_y = max(y1 - 80, label_size[1] + 8)
         # Draw background with white border for contrast
@@ -300,6 +304,11 @@ def draw_enhanced_detections(frame, det_info, result, fused_results, timeline_en
                      (x1 + label_size[0] + 6, label_y + 4), box_color, 2)
         cv2.putText(frame, label_text, (x1 + 2, label_y - 3),
                    cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+
+        identity_text = f"ID:{identity_name} {identity_confidence*100:.0f}%"
+        identity_color = (0, 255, 0) if is_known_family else (180, 180, 180)
+        cv2.putText(frame, identity_text, (x1 + 2, label_y + 18),
+               cv2.FONT_HERSHEY_DUPLEX, 0.45, identity_color, 1, cv2.LINE_AA)
         
         # Draw all THREE anomalies EQUALLY prominent (balanced system - not violence-centric)
         indicator_x = x2 + 8
@@ -329,7 +338,11 @@ def draw_enhanced_detections(frame, det_info, result, fused_results, timeline_en
         loitering_color = (255, 0, 255) if loitering_detected else (100, 100, 100)
         circle_radius = 8 if loitering_detected else 6
         cv2.circle(frame, (indicator_x - 5, indicator_y), circle_radius, loitering_color, -1, cv2.LINE_AA)
-        cv2.putText(frame, f"L:{threat_data.get('loitering_score', 0):.2f}", (indicator_x + 8, indicator_y + 4),
+        loitering_score = threat_data.get('loitering_score', 0)
+        loitering_label = f"L:{loitering_score:.2f}"
+        if threat_data.get('suppress_loitering', False):
+            loitering_label += " (suppressed)"
+        cv2.putText(frame, loitering_label, (indicator_x + 8, indicator_y + 4),
                    cv2.FONT_HERSHEY_DUPLEX, font_size, (255, 255, 255), 2, cv2.LINE_AA)
         
         # OVERALL Threat Score
@@ -367,6 +380,8 @@ def draw_enhanced_hud(frame, violence_data, overall_threat_level, person_threats
     raw_prob = violence_data['raw']
     smooth_prob = violence_data['smooth']
     violence_status = violence_data['status']
+    known_family_count = sum(1 for threat in person_threats if threat.get('is_known_family', False))
+    unknown_count = max(0, len(person_threats) - known_family_count)
     
     # Main HUD background
     overlay = frame.copy()
@@ -406,10 +421,13 @@ def draw_enhanced_hud(frame, violence_data, overall_threat_level, person_threats
     info_y = 72
     cv2.putText(frame, f"People: {len(person_threats)} | Threats: {threat_threat_count} | Weapons: {weapon_count} | Loiter: {loitering_count}",
                (16, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1)
+
+    cv2.putText(frame, f"Known family: {known_family_count} | Unknown: {unknown_count}",
+               (16, info_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
     
     # FPS and frame info
     cv2.putText(frame, f"FPS: {fps_val:.1f} | Frame: {frame_no}",
-               (16, info_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
+               (16, info_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
     
     # Overall threat level badge
     overall_threat_color = (VIOLENCE_COLOR if overall_threat_level == 'CRITICAL'

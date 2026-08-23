@@ -329,7 +329,7 @@ class WeaponDetector:
             if not is_hand_overlap:
                 filtered.append(det)
         
-        return filtered if filtered else detections
+        return filtered
     
     def _bbox_overlap(self, bbox1, bbox2):
         """Check if two bboxes overlap. Args: bbox = [x1, y1, x2, y2]."""
@@ -412,7 +412,7 @@ class WeaponDetector:
             if width >= min_w and width <= max_w and height >= min_h and height <= max_h and conf >= min_conf:
                 filtered.append(w)
         
-        return filtered if filtered else detected_weapons
+        return filtered
     
     def _check_class_consistency(self, track_id, current_class):
         """

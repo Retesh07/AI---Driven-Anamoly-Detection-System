@@ -8,7 +8,7 @@ Designed to separate individual motion from interaction patterns.
 import numpy as np
 from constants import (
     PERSON_DIM, INTERACTION_DIM, FEATURE_DIM, NUM_KEYPOINTS,
-    ARM_SEGS, LEG_SEGS, TORSO_SEG, HEAD_SEG
+    ARM_SEGS, LEG_SEGS, TORSO_SEG, HEAD_SEG, NUM_TOP_PERSONS
 )
 
 
@@ -290,10 +290,13 @@ def extract_frame_features(frame, result, dets, tracker,
     # Update tracker
     dets = tracker.update_with_detections(dets)
     
-    # Select top 2 persons by area
+    # Use the two largest people for the fixed-size violence feature vector,
+    # while returning every tracked person to the other detectors.
     areas = [(dets.xyxy[i, 2] - dets.xyxy[i, 0]) * (dets.xyxy[i, 3] - dets.xyxy[i, 1])
              for i in range(len(dets))]
-    indices = np.argsort(-np.array(areas))[:2]
+    feature_indices = list(np.argsort(-np.array(areas))[:NUM_TOP_PERSONS])
+    feature_index_set = set(feature_indices)
+    indices = feature_indices + [idx for idx in range(len(dets)) if idx not in feature_index_set]
     
     person_feats = []
     centers = []
@@ -309,8 +312,6 @@ def extract_frame_features(frame, result, dets, tracker,
         # Normalized center
         xc = (x1 + x2) / 2 / W
         yc = (y1 + y2) / 2 / H
-        centers.append((xc, yc))
-        bboxes.append([x1, y1, x2, y2])
         det_info.append({'bbox': [int(x1), int(y1), int(x2), int(y2)], 'tid': tid})
         
         # Extract keypoints
@@ -338,7 +339,6 @@ def extract_frame_features(frame, result, dets, tracker,
             pddx, pddy = prev_acc[tid]
             dddx, dddy = ddx - pddx, ddy - pddy
         
-        velocities.append((dx, dy))
         prev_centers[tid] = (xc, yc)
         prev_vel[tid] = (dx, dy)
         prev_acc[tid] = (ddx, ddy)
@@ -352,8 +352,12 @@ def extract_frame_features(frame, result, dets, tracker,
         )
         
         prev_kps[tid] = kps.copy()
-        person_feats.append(pf)
-        kps_list.append(kps)
+        if idx in feature_index_set:
+            centers.append((xc, yc))
+            bboxes.append([x1, y1, x2, y2])
+            velocities.append((dx, dy))
+            person_feats.append(pf)
+            kps_list.append(kps)
     
     # Pad if less than 2 persons
     while len(person_feats) < 2:

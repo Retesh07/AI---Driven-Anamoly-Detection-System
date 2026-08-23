@@ -2,6 +2,7 @@
 import json
 import subprocess
 import os
+import sys
 
 videos = ['weapon.mp4', 'f1.mp4', 'f2.mp4', 'loitering.mp4']
 
@@ -10,12 +11,20 @@ print('='*60)
 print('Real-world surveillance deployment metrics:')
 print('='*60)
 
+ready = True
 for video in videos:
     if os.path.exists('results/output.json'):
         os.remove('results/output.json')
     
-    subprocess.run(f'python main.py --video {video} --output results', 
-                  shell=True, capture_output=True, timeout=120)
+    try:
+        subprocess.run(
+            [sys.executable, 'main.py', '--video', video, '--output', 'results'],
+            check=True, capture_output=True, timeout=120,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        print(f'{video:20} FAIL: {exc}')
+        ready = False
+        continue
     
     with open('results/output.json') as f:
         data = json.load(f)
@@ -37,10 +46,14 @@ for video in videos:
     else:
         target = '<5%'
         status = 'PASS' if pct < 5 else 'MARGINAL'
+
+    ready = ready and status == 'PASS'
     
     print(f'{video:20} {weapons:3}/{total:4} ({pct:5.1f}%) | Target: {target:5} | {status}')
 
 print('='*60)
-print('Production Status: READY FOR DEPLOYMENT')
-print('Weapon-specific parameters: ACTIVE')
-print('No overfitting: Balanced across multiple scenarios')
+print(f"Production Status: {'READY FOR DEPLOYMENT' if ready else 'NOT READY'}")
+if ready:
+    print('Weapon-specific parameters: ACTIVE')
+    print('No overfitting: Balanced across multiple scenarios')
+raise SystemExit(0 if ready else 1)
