@@ -26,10 +26,11 @@ import cv2
 
 from identity.recognizer import (
     estimate_face_quality,
-    prepare_face_crop,
     build_identity_templates,
     save_template_cache,
+    FaceIdentityRecognizer,
 )
+from constants import FACE_FACE_CROP_SIZE
 
 
 MIN_FACE_BRIGHTNESS = 28.0
@@ -216,19 +217,21 @@ def enroll_faces(source_dir, output_dir, overwrite=False, min_face_size=48):
                 record_skip(reason)
                 continue
 
-            normalized = prepare_face_crop(face_crop)
-            if normalized is None:
-                record_skip('normalization_failed')
-                continue
-
-            resized = cv2.cvtColor(normalized, cv2.COLOR_GRAY2BGR)
+            # Save the colour (BGR) face crop so SFace can use full colour information.
+            # The grayscale path (prepare_face_crop) was designed for the legacy
+            # hand-crafted embedding and must not be used with SFace.
+            resized_color = cv2.resize(
+                face_crop,
+                (FACE_FACE_CROP_SIZE, FACE_FACE_CROP_SIZE),
+                interpolation=cv2.INTER_AREA,
+            )
             destination = target_identity_dir / f'{image_path.stem}_face.jpg'
 
             if destination.exists() and not overwrite:
                 record_skip('exists')
                 continue
 
-            cv2.imwrite(str(destination), resized)
+            cv2.imwrite(str(destination), resized_color)
             enrolled_count += 1
             summary['faces_enrolled'] += 1
 
@@ -242,7 +245,10 @@ def enroll_faces(source_dir, output_dir, overwrite=False, min_face_size=48):
         for reason, count in skip_reasons.items():
             summary['skip_reasons'][reason] = summary['skip_reasons'].get(reason, 0) + count
 
-    templates = build_identity_templates(output_dir)
+    # Build and cache identity templates using SFace backend when available.
+    # Instantiating FaceIdentityRecognizer loads SFace if the ONNX file is present.
+    _recognizer_for_embedding = FaceIdentityRecognizer(database_dir=output_dir, verbose=False)
+    templates = build_identity_templates(output_dir, _recognizer_for_embedding.sface_recognizer)
     cache_path = save_template_cache(output_dir, templates)
     summary['embeddings_cache'] = str(cache_path) if cache_path else None
 
