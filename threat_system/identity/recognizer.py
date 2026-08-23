@@ -40,6 +40,7 @@ from constants import (
     FACE_FALLBACK_ENABLED,
     FACE_EMBEDDINGS_CACHE,
     FACE_FACE_CROP_SIZE,
+    FACE_FORGET_FRAMES,
     FACE_MODEL_DIR,
     FACE_MIN_FACE_SIZE,
     FACE_LOW_LIGHT_THRESHOLD,
@@ -415,6 +416,7 @@ class TrackIdentityState:
     stable_name: str = 'unknown'
     stable_confidence: float = 0.0
     stable_similarity: float = 0.0
+    stable_quality: float = 0.0
     candidate_name: str = 'unknown'
     consecutive_known_frames: int = 0
     consecutive_unknown_frames: int = 0
@@ -469,7 +471,8 @@ class FaceIdentityRecognizer:
 
         # ---- Stability hyper-parameters ----
         self.confirmation_frames = 2
-        self.forget_frames = 3
+        # ponytail: fixed frame grace window; make it time-based if source FPS varies materially.
+        self.forget_frames = FACE_FORGET_FRAMES
         self.known_margin = FACE_RECOGNITION_MARGIN
         self.unknown_margin = 0.02
         self.confidence_ema_alpha = 0.35
@@ -816,23 +819,30 @@ class FaceIdentityRecognizer:
         candidate = self._pick_candidate(recent)
         current = history[-1]
 
+        if current.name != 'unknown':
+            state.consecutive_unknown_frames = 0
+        else:
+            state.consecutive_unknown_frames += 1
+
         if candidate.name != 'unknown':
-            if state.candidate_name == candidate.name:
+            if current.name == 'unknown':
+                state.consecutive_known_frames = 0
+            elif state.candidate_name == candidate.name:
                 state.consecutive_known_frames += 1
             else:
                 state.candidate_name = candidate.name
                 state.consecutive_known_frames = 1
-                state.consecutive_unknown_frames = 0
 
             state.stable_confidence = self._ema(state.stable_confidence, candidate.confidence)
             state.stable_similarity = self._ema(state.stable_similarity, candidate.similarity)
+            state.stable_quality = self._ema(state.stable_quality, candidate.quality_score)
 
-            if (self._is_confident_candidate(candidate, recent) and
+            if (current.name != 'unknown' and
+                    self._is_confident_candidate(candidate, recent) and
                     state.consecutive_known_frames >= self.confirmation_frames):
                 state.stable_name = candidate.name
                 state.last_update_frame += 1
         else:
-            state.consecutive_unknown_frames += 1
             state.consecutive_known_frames = 0
 
             if state.stable_name != 'unknown' and \
@@ -842,6 +852,18 @@ class FaceIdentityRecognizer:
                 state.stable_name = 'unknown'
                 state.stable_confidence = self._ema(state.stable_confidence, current.confidence)
                 state.stable_similarity = self._ema(state.stable_similarity, current.similarity)
+                state.stable_quality = self._ema(state.stable_quality, current.quality_score)
+
+        # Re-lock on one strong observation after a prolonged detector miss.
+        if (state.stable_name == 'unknown' and current.name != 'unknown' and
+                current.confidence >= self.threshold + self.known_margin):
+            state.stable_name = current.name
+            state.candidate_name = current.name
+            state.consecutive_known_frames = self.confirmation_frames
+            state.consecutive_unknown_frames = 0
+            state.stable_confidence = current.confidence
+            state.stable_similarity = current.similarity
+            state.stable_quality = current.quality_score
 
         if (state.stable_name == 'unknown' and candidate.name != 'unknown' and
                 candidate.confidence >= self.threshold + self.known_margin):
@@ -850,6 +872,11 @@ class FaceIdentityRecognizer:
         if state.stable_name != 'unknown' and \
                 state.consecutive_unknown_frames >= self.forget_frames:
             state.stable_name = 'unknown'
+            state.candidate_name = 'unknown'
+            state.consecutive_known_frames = 0
+            state.stable_confidence = self._ema(state.stable_confidence, current.confidence)
+            state.stable_similarity = self._ema(state.stable_similarity, current.similarity)
+            state.stable_quality = self._ema(state.stable_quality, current.quality_score)
 
         if state.stable_name != 'unknown':
             src = self._get_latest_by_name(recent, state.stable_name)
@@ -857,6 +884,7 @@ class FaceIdentityRecognizer:
                 name=state.stable_name,
                 confidence=state.stable_confidence,
                 similarity=state.stable_similarity,
+                quality_score=state.stable_quality,
                 is_known_family=True,
                 face_detected=src.face_detected if src else False,
                 face_bbox=src.face_bbox if src else current.face_bbox,
@@ -866,6 +894,7 @@ class FaceIdentityRecognizer:
                 name='unknown',
                 confidence=state.stable_confidence,
                 similarity=state.stable_similarity,
+                quality_score=current.quality_score,
                 is_known_family=False,
                 face_detected=current.face_detected,
                 face_bbox=current.face_bbox,
@@ -892,6 +921,7 @@ class FaceIdentityRecognizer:
             name=best_name,
             confidence=float(np.mean([m.confidence for m in best_items])),
             similarity=float(np.mean([m.similarity for m in best_items])),
+            quality_score=float(np.mean([m.quality_score for m in best_items])),
             is_known_family=True,
             face_detected=any(m.face_detected for m in best_items),
             face_bbox=best_items[-1].face_bbox,

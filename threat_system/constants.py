@@ -42,6 +42,7 @@ FACE_SFACE_MODEL = 'face_recognition_sface_2021dec.onnx'
 FACE_RECOGNITION_THRESHOLD = 0.363   # Cosine similarity threshold for SFace (paper: 0.363)
 FACE_RECOGNITION_MARGIN = 0.04
 FACE_SMOOTHING_WINDOW = 5
+FACE_FORGET_FRAMES = 12  # Approx. one second of grace at the pipeline's effective FPS
 FACE_MIN_FACE_SIZE = 48
 FACE_FALLBACK_ENABLED = True
 FACE_LOW_LIGHT_THRESHOLD = 90.0
