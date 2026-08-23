@@ -1,12 +1,15 @@
 import tempfile
 import unittest
+from collections import defaultdict, deque
 
 import numpy as np
 
+from constants import FACE_CONFIRMATION_FRAMES, FACE_FORGET_FRAMES
 from fusion.temporal_fusion import TemporalFusion
 from identity.recognizer import (
     FaceIdentityRecognizer,
     IdentityMatch,
+    TrackIdentityState,
     load_template_cache,
     save_template_cache,
 )
@@ -44,16 +47,49 @@ class TemporalFusionTests(unittest.TestCase):
 
 
 class FaceIdentityTests(unittest.TestCase):
-    def test_borderline_matches_do_not_confirm_identity(self):
+    def recognizer(self):
         recognizer = FaceIdentityRecognizer.__new__(FaceIdentityRecognizer)
         recognizer.threshold = 0.78
-        recognizer.known_margin = 0.06
-        recognizer.confirmation_frames = 2
+        recognizer.confirmation_frames = FACE_CONFIRMATION_FRAMES
+        recognizer.forget_frames = FACE_FORGET_FRAMES
+        recognizer.smoothing_window = 5
+        recognizer.confidence_ema_alpha = 0.35
+        recognizer.identity_history = defaultdict(lambda: deque(maxlen=5))
+        recognizer.track_states = defaultdict(TrackIdentityState)
+        return recognizer
+
+    def stabilize(self, recognizer, match):
+        recognizer.identity_history[1].append(match)
+        return recognizer._stabilize_identity(1)['identity_name']
+
+    def test_borderline_matches_do_not_confirm_identity(self):
+        recognizer = self.recognizer()
         history = [
             IdentityMatch(name='Mom', confidence=0.05, similarity=0.79),
             IdentityMatch(name='Mom', confidence=0.05, similarity=0.79),
         ]
         self.assertFalse(recognizer._is_confident_candidate(history[-1], history))
+
+    def test_identity_survives_brief_detection_misses(self):
+        recognizer = self.recognizer()
+        known = IdentityMatch(name='Mom', confidence=0.8, similarity=0.9, face_detected=True)
+        unknown = IdentityMatch()
+
+        self.assertEqual([self.stabilize(recognizer, known) for _ in range(FACE_CONFIRMATION_FRAMES)][-1], 'Mom')
+        self.assertEqual(
+            [self.stabilize(recognizer, unknown) for _ in range(FACE_FORGET_FRAMES - 1)],
+            ['Mom'] * (FACE_FORGET_FRAMES - 1),
+        )
+        self.assertEqual(self.stabilize(recognizer, unknown), 'unknown')
+
+    def test_single_wrong_label_does_not_replace_stable_identity(self):
+        recognizer = self.recognizer()
+        mom = IdentityMatch(name='Mom', confidence=0.8, similarity=0.9, face_detected=True)
+        dad = IdentityMatch(name='Dad', confidence=0.8, similarity=0.9, face_detected=True)
+
+        [self.stabilize(recognizer, mom) for _ in range(FACE_CONFIRMATION_FRAMES)]
+        self.assertEqual(self.stabilize(recognizer, dad), 'Mom')
+        self.assertEqual(self.stabilize(recognizer, mom), 'Mom')
 
     def test_fallback_crop_cannot_match_known_family(self):
         recognizer = FaceIdentityRecognizer.__new__(FaceIdentityRecognizer)

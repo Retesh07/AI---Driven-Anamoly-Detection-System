@@ -16,15 +16,16 @@ import numpy as np
 
 from constants import (
     FACE_DB_PATH,
+    FACE_CONFIRMATION_FRAMES,
     FACE_DETECTOR_BACKEND,
     FACE_FALLBACK_ENABLED,
+    FACE_FORGET_FRAMES,
     FACE_EMBEDDINGS_CACHE,
     FACE_FACE_CROP_SIZE,
     FACE_MODEL_DIR,
     FACE_MIN_FACE_SIZE,
     FACE_LOW_LIGHT_THRESHOLD,
     FACE_NOISE_THRESHOLD,
-    FACE_RECOGNITION_MARGIN,
     FACE_RECOGNITION_THRESHOLD,
     FACE_SMOOTHING_WINDOW,
     FACE_YUNET_MODEL,
@@ -268,7 +269,6 @@ class TrackIdentityState:
     candidate_name: str = 'unknown'
     consecutive_known_frames: int = 0
     consecutive_unknown_frames: int = 0
-    last_update_frame: int = 0
 
 
 class FaceIdentityRecognizer:
@@ -294,10 +294,8 @@ class FaceIdentityRecognizer:
         self.identity_history = defaultdict(lambda: deque(maxlen=self.smoothing_window))
         self.track_states = defaultdict(TrackIdentityState)
 
-        self.confirmation_frames = 2
-        self.forget_frames = 3
-        self.known_margin = FACE_RECOGNITION_MARGIN
-        self.unknown_margin = 0.02
+        self.confirmation_frames = FACE_CONFIRMATION_FRAMES
+        self.forget_frames = FACE_FORGET_FRAMES
         self.confidence_ema_alpha = 0.35
 
         if self.verbose:
@@ -328,42 +326,39 @@ class FaceIdentityRecognizer:
         recent_history = history[-self.smoothing_window:]
         state = self.track_states[track_id]
 
-        candidate = self._pick_candidate(recent_history)
         current_frame_match = history[-1]
 
-        if candidate.name != 'unknown':
-            if state.candidate_name == candidate.name:
+        if current_frame_match.name != 'unknown':
+            state.consecutive_unknown_frames = 0
+
+            if state.stable_name == current_frame_match.name:
+                state.candidate_name = 'unknown'
+                state.consecutive_known_frames = 0
+                state.stable_confidence = self._ema(state.stable_confidence, current_frame_match.confidence)
+                state.stable_similarity = self._ema(state.stable_similarity, current_frame_match.similarity)
+            elif state.candidate_name == current_frame_match.name:
                 state.consecutive_known_frames += 1
             else:
-                state.candidate_name = candidate.name
+                state.candidate_name = current_frame_match.name
                 state.consecutive_known_frames = 1
-                state.consecutive_unknown_frames = 0
 
-            state.stable_confidence = self._ema(state.stable_confidence, candidate.confidence)
-            state.stable_similarity = self._ema(state.stable_similarity, candidate.similarity)
-
-            if self._is_confident_candidate(candidate, recent_history) and state.consecutive_known_frames >= self.confirmation_frames:
+            candidate_history = recent_history[-state.consecutive_known_frames:]
+            candidate = self._pick_candidate(candidate_history)
+            if (state.consecutive_known_frames >= self.confirmation_frames and
+                    self._is_confident_candidate(candidate, candidate_history)):
                 state.stable_name = candidate.name
-                state.last_update_frame += 1
+                state.stable_confidence = candidate.confidence
+                state.stable_similarity = candidate.similarity
 
         else:
             state.consecutive_unknown_frames += 1
+            state.candidate_name = 'unknown'
             state.consecutive_known_frames = 0
 
-            if state.stable_name != 'unknown' and state.consecutive_unknown_frames < self.forget_frames:
-                # Keep the previously confirmed identity through brief misses.
-                pass
-            else:
+            if state.consecutive_unknown_frames >= self.forget_frames:
                 state.stable_name = 'unknown'
-                state.stable_confidence = self._ema(state.stable_confidence, current_frame_match.confidence)
-                state.stable_similarity = self._ema(state.stable_similarity, current_frame_match.similarity)
-
-        if state.stable_name == 'unknown' and candidate.name != 'unknown' and candidate.confidence >= self.threshold + self.known_margin:
-            # Start a confirmation window, but do not flip immediately.
-            state.candidate_name = candidate.name
-
-        if state.stable_name != 'unknown' and state.consecutive_unknown_frames >= self.forget_frames:
-            state.stable_name = 'unknown'
+                state.stable_confidence = 0.0
+                state.stable_similarity = 0.0
 
         if state.stable_name != 'unknown':
             stable_source = self._get_latest_by_name(recent_history, state.stable_name)
@@ -420,12 +415,8 @@ class FaceIdentityRecognizer:
 
     def _is_confident_candidate(self, candidate, history):
         support = sum(1 for item in history if item.name == candidate.name)
-        average_conf = float(np.mean([item.confidence for item in history if item.name == candidate.name]))
         average_similarity = float(np.mean([item.similarity for item in history if item.name == candidate.name]))
-        return support >= self.confirmation_frames and (
-            average_conf >= self.threshold + self.known_margin or
-            average_similarity >= self.threshold + self.known_margin
-        )
+        return support >= self.confirmation_frames and average_similarity >= self.threshold
 
     def _get_latest_by_name(self, history, name):
         for item in reversed(history):
