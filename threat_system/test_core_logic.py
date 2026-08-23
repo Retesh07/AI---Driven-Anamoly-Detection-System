@@ -5,7 +5,8 @@ from collections import defaultdict, deque
 import numpy as np
 
 from constants import FACE_CONFIRMATION_FRAMES, FACE_FORGET_FRAMES
-from fusion.temporal_fusion import TemporalFusion
+from evaluate_rwf2000 import metrics
+from fusion.temporal_fusion import TemporalFusion, ThreatLevel
 from identity.recognizer import (
     FaceIdentityRecognizer,
     IdentityMatch,
@@ -44,6 +45,43 @@ class TemporalFusionTests(unittest.TestCase):
         )
         self.assertGreater(interaction.interaction_intensity, 0.3)
         self.assertLess(results[1]['interaction_amplification'], 1.1)
+
+    def test_unconfirmed_high_motion_is_not_a_threat(self):
+        fusion = TemporalFusion()
+        result, _ = fusion.process_frame(
+            {'smooth_prob': 0.9, 'confirmed': False, 'status': 'NORMAL'},
+            {}, {}, {1: (0.5, 0.5)}, [1],
+        )
+        self.assertEqual(result[1]['threat_level'], ThreatLevel.NORMAL.name)
+        self.assertEqual(result[1]['behavior_label'], 'NORMAL')
+
+    def test_in_scope_behavior_labels(self):
+        fusion = TemporalFusion()
+        warning = {'smooth_prob': 0.5, 'confirmed': False, 'status': 'WARNING'}
+        result, _ = fusion.process_frame(warning, {}, {}, {1: (0.5, 0.5)}, [1])
+        self.assertEqual(result[1]['behavior_label'], 'SUSPICIOUS')
+
+        loitering = {1: {'smooth_score': 0.8, 'loitering_detected': True}}
+        result, _ = fusion.process_frame(warning, {}, loitering, {1: (0.5, 0.5)}, [1])
+        self.assertEqual(result[1]['behavior_label'], 'SUSPICIOUS_LOITERING')
+
+        violence = {'smooth_prob': 0.8, 'confirmed': True, 'status': 'VIOLENCE'}
+        result, _ = fusion.process_frame(violence, {}, {}, {1: (0.5, 0.5)}, [1])
+        self.assertEqual(result[1]['behavior_label'], 'VIOLENCE')
+
+    def test_negative_interaction_velocity_means_approaching(self):
+        context = TemporalFusion()._extract_context(
+            1,
+            type('History', (), {'violence_history': deque([0.6] * 5), 'weapon_history': deque()})(),
+            {},
+            {'inter_features': {'approach_vel': -0.1, 'bbox_iou': 0.0}},
+        )
+        self.assertTrue(context['approaching'])
+
+    def test_rwf2000_metrics_report_false_positives(self):
+        report = metrics([1, 1, 0, 0], [1, 0, 1, 0])
+        self.assertEqual((report['tp'], report['tn'], report['fp'], report['fn']), (1, 1, 1, 1))
+        self.assertEqual(report['false_positive_rate'], 0.5)
 
 
 class FaceIdentityTests(unittest.TestCase):

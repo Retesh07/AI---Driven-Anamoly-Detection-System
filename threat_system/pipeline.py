@@ -337,6 +337,7 @@ class ThreatDetectionPipeline:
                         'weapon_present': results['weapon_present'],
                         'weapon_type': weapon_type,
                         'loitering_detected': results['loitering_detected'],
+                        'behavior_label': results['behavior_label'],
                         'loitering_suppressed': results.get('suppress_loitering', False),
                         'identity_name': results.get('identity_name', 'unknown'),
                         'identity_confidence': results.get('identity_confidence', 0.0),
