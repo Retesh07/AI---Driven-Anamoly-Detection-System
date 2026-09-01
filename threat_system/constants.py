@@ -31,6 +31,24 @@ MODEL_PATHS = {
     'weapon': 'models/weapon_detector.pt',
 }
 
+# Face identity settings
+FACE_DB_PATH = 'models/faces'
+FACE_EMBEDDINGS_CACHE = 'face_embeddings.npz'
+FACE_FACE_CROP_SIZE = 160
+FACE_MODEL_DIR = 'models/face_models'
+FACE_DETECTOR_BACKEND = 'auto'  # auto | yunet | haar
+FACE_YUNET_MODEL = 'face_detection_yunet_2023mar.onnx'
+FACE_SFACE_MODEL = 'face_recognition_sface_2021dec.onnx'
+FACE_RECOGNITION_THRESHOLD = 0.363   # Cosine similarity threshold for SFace (paper: 0.363)
+FACE_RECOGNITION_MARGIN = 0.04
+FACE_SMOOTHING_WINDOW = 5
+FACE_MIN_FACE_SIZE = 48
+FACE_FALLBACK_ENABLED = True
+FACE_LOW_LIGHT_THRESHOLD = 90.0
+FACE_NOISE_THRESHOLD = 28.0
+FACE_MIN_QUALITY_TO_ENROLL = 0.22
+FACE_MIN_QUALITY_TO_MATCH = 0.18
+
 # Detection parameters
 POSE_CONFIDENCE_THRESHOLD = 0.25
 PERSON_DETECTION_CLASS = 0  # YOLO class ID for person
