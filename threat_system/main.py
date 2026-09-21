@@ -10,7 +10,6 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
-from pipeline import ThreatDetectionPipeline
 
 
 def main():
@@ -34,6 +33,8 @@ Examples:
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument('--video', type=str, help='Input video file path')
     input_group.add_argument('--webcam', action='store_true', help='Use webcam input')
+    parser.add_argument('--camera-source', type=str, default='0',
+                       help='Camera index (0, 1, ...) or RTSP/HTTP URL (default: 0)')
     
     # Output options
     parser.add_argument('--output', type=str, default='./results',
@@ -64,7 +65,12 @@ Examples:
     elif args.gpu:
         device = 'cuda'
     else:
-        device = 'cuda'  # Auto-detect, default to CUDA
+        try:
+            import torch
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        except ImportError:
+            # Initialization below produces the actionable dependency error.
+            device = 'cpu'
     
     if args.verbose:
         print(f'[Main] Device: {device}')
@@ -72,6 +78,9 @@ Examples:
     
     # ===== Initialize Pipeline =====
     try:
+        # Delay heavyweight CV/model imports until after argument parsing.  This
+        # keeps ``--help`` usable on deployment hosts before dependencies exist.
+        from pipeline import ThreatDetectionPipeline
         pipeline = ThreatDetectionPipeline(
             project_root=Path(__file__).parent,
             device=device,
@@ -97,9 +106,17 @@ Examples:
             return 0
         
         elif args.webcam:
-            print('[Error] Webcam mode not yet implemented')
-            print('[Hint] Modify pipeline.py to support live capture')
-            return 1
+            # Keep URLs as strings but make common camera indexes work without
+            # requiring users to quote or otherwise special-case them.
+            camera_source = int(args.camera_source) if args.camera_source.isdigit() else args.camera_source
+            results = pipeline.process_realtime(
+                camera_source=camera_source,
+                output_dir=args.output,
+                violence_threshold=args.violence_threshold,
+                warning_threshold=args.warning_threshold,
+            )
+            print(f"\n[Success] Live session ended. Processed {results['processing_stats']['processed_frames']} frames.")
+            return 0
     
     except KeyboardInterrupt:
         print('\\n[Interrupted] Processing stopped by user')

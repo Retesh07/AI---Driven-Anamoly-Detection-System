@@ -11,7 +11,7 @@ from collections import defaultdict, deque
 from constants import (
     SEQ_LEN, FEATURE_DIM, PERSON_DIM, INTERACTION_DIM,
     DEFAULT_VIOLENCE_THRESHOLD, DEFAULT_WARNING_THRESHOLD,
-    EMA_ALPHA, CONSECUTIVE_ALERT_FRAMES
+    EMA_ALPHA, CONSECUTIVE_ALERT_FRAMES, VIOLENCE_MIN_PERSONS
 )
 from violence.model import ViolenceDetectorV3
 
@@ -129,13 +129,16 @@ class ViolenceDetector:
             self.ema_prob = self.ema_alpha * self.raw_prob + (1 - self.ema_alpha) * self.ema_prob
         
         # ===== FP Mitigation 4: Single-Person Gate =====
-        # Raise threshold if only 1 person (motion alone shouldn't trigger violence)
+        # This is an interpersonal-violence model. A person moving, exercising,
+        # or sitting near a camera must not become a violence alert merely
+        # because the raw network score is high.
         effective_threshold = self.violence_threshold
-        if num_persons < 2:
+        enough_people = num_persons >= VIOLENCE_MIN_PERSONS
+        if not enough_people:
             effective_threshold = self.violence_threshold + 0.10
         
         # ===== FP Mitigation 3: Sustained Alert Requirement =====
-        if self.ema_prob >= effective_threshold:
+        if enough_people and self.ema_prob >= effective_threshold:
             self.consecutive_alerts += 1
         else:
             self.consecutive_alerts = max(0, self.consecutive_alerts - 1)
@@ -159,9 +162,15 @@ class ViolenceDetector:
         
         person_scores = []
         
+        # Fusion must consume the policy-gated score, not the raw network
+        # output. Previously fusion bypassed the single-person guard above.
+        risk_prob = self.ema_prob if (enough_people and self.confirmed_violence) else 0.0
+
         return {
             'raw_prob': self.raw_prob,
             'smooth_prob': self.ema_prob,
+            'risk_prob': risk_prob,
+            'eligible_for_violence_alert': enough_people,
             'status': status,
             'confirmed': self.confirmed_violence,
             'consecutive_alerts': self.consecutive_alerts,

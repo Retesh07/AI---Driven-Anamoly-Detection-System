@@ -14,6 +14,7 @@ from collections import defaultdict, deque
 from constants import (
     WEAPON_CONFIDENCE_THRESHOLD, WEAPON_TEMPORAL_BUFFER, 
     WEAPON_CONFIDENCE_BOOST, WEAPON_EMA_DECISION_THRESHOLD,
+    WEAPON_MIN_CONFIRMED_SCORE, WEAPON_CONFIRMATION_FRAMES,
     GUN_CONFIDENCE_THRESHOLD, GUN_SIZE_MIN_WIDTH, GUN_SIZE_MAX_WIDTH, GUN_SIZE_MIN_HEIGHT, GUN_SIZE_MAX_HEIGHT,
     KNIFE_CONFIDENCE_THRESHOLD, KNIFE_SIZE_MIN_WIDTH, KNIFE_SIZE_MAX_WIDTH, KNIFE_SIZE_MIN_HEIGHT, KNIFE_SIZE_MAX_HEIGHT,
     WEAPON_SPATIAL_THRESHOLD, WEAPON_CLASS_CONSISTENCY_FRAMES, 
@@ -65,6 +66,7 @@ class WeaponDetector:
         self.weapon_detection_frame = defaultdict(int)  # Frame where weapon first detected per person
         self.weapon_persistence_count = defaultdict(int)  # How many frames weapon persisted
         self.has_ever_had_weapon = defaultdict(bool)  # Track if person ever had weapon
+        self.confirmed_weapon_type = {}  # tid -> class after multi-frame confirmation
     
     def detect(self, frame):
         """
@@ -247,21 +249,28 @@ class WeaponDetector:
             # Only count as weapon_present if it's a REAL gun/knife (not unknown)
             # Unknown detections require HIGHER EMA threshold to be believed
             
+            weapon_confirmed = (
+                history_agreement and
+                self.person_weapon_scores[tid] >= WEAPON_MIN_CONFIRMED_SCORE
+            )
+            if weapon_confirmed and weapon_type in ['gun', 'knife']:
+                self.confirmed_weapon_type[tid] = weapon_type
             if weapon_type == 'gun':
-                # Gun: trust if smooth score > threshold
-                weapon_present = self.person_weapon_scores[tid] > WEAPON_EMA_DECISION_THRESHOLD
+                weapon_present = weapon_confirmed
             elif weapon_type == 'knife':
-                # Knife: trust if smooth score > threshold
-                weapon_present = self.person_weapon_scores[tid] > WEAPON_EMA_DECISION_THRESHOLD
+                weapon_present = weapon_confirmed
             else:
                 # Unknown: NEVER report as weapon (strict filter)
                 # Unknown detections are likely false positives (phones, hands, etc.)
                 weapon_present = False
             
             # Apply persistence ONLY to real weapons
-            if self.weapon_active_frames[tid] > 0:
-                if weapon_type in ['gun', 'knife']:
-                    weapon_present = True  # Keep reporting real weapons during persistence
+            persisted_type = self.confirmed_weapon_type.get(tid)
+            if self.weapon_active_frames[tid] > 0 and persisted_type in ['gun', 'knife']:
+                # A confirmed weapon remains visible through short occlusions;
+                # unconfirmed detections never earn this persistence.
+                weapon_present = True
+                weapon_type = persisted_type
             
             person_results[tid] = {
                 'detected': len(detected_weapons) > 0,
@@ -269,6 +278,7 @@ class WeaponDetector:
                 'smooth_score': self.person_weapon_scores[tid],
                 'weapon_present': weapon_present,
                 'weapon_type': weapon_type,  # 'gun' or 'knife'
+                'confirmed': weapon_confirmed,
                 'history_agreement': self._check_history_agreement(tid),
                 'has_ever_had_weapon': self.has_ever_had_weapon[tid],  # For tracking
                 'weapon_detection_frame': self.weapon_detection_frame.get(tid, -1),  # When weapon first detected
@@ -412,7 +422,9 @@ class WeaponDetector:
             if width >= min_w and width <= max_w and height >= min_h and height <= max_h and conf >= min_conf:
                 filtered.append(w)
         
-        return filtered if filtered else detected_weapons
+        # Do not restore rejected boxes. That silently undoes all class-specific
+        # confidence, size, and aspect-ratio safety filters.
+        return filtered
     
     def _check_class_consistency(self, track_id, current_class):
         """
@@ -451,14 +463,19 @@ class WeaponDetector:
     def _check_history_agreement(self, track_id):
         """Check if recent frames agree on weapon presence."""
         history = self.weapon_history.get(track_id, [])
-        if len(history) < 3:
+        if len(history) < WEAPON_CONFIRMATION_FRAMES:
             return False
         
-        detected_count = sum(1 for h in list(history)[-3:] if h['detected'])
-        return detected_count >= 2  # At least 2 out of last 3 frames
+        recent = list(history)[-WEAPON_CONFIRMATION_FRAMES:]
+        detected_count = sum(1 for h in recent if h['detected'])
+        return detected_count >= WEAPON_CONFIRMATION_FRAMES - 1
     
     def reset(self):
         """Clear state for new video."""
         self.weapon_history.clear()
         self.person_weapon_scores.clear()
         self.weapon_active_frames.clear()
+        self.weapon_detection_frame.clear()
+        self.weapon_persistence_count.clear()
+        self.has_ever_had_weapon.clear()
+        self.confirmed_weapon_type.clear()

@@ -41,6 +41,8 @@ class PersonThreatHistory:
     frames_at_critical: int = 0  # How many frames at CRITICAL
     last_threat_level: str = 'NORMAL'  # Previous frame's threat level
     frames_since_critical: int = 0  # Reset when CRITICAL, increment when below
+    pending_threat_level: str = 'NORMAL'  # Candidate level awaiting confirmation
+    pending_threat_frames: int = 0
 
 
 @dataclass  
@@ -112,7 +114,9 @@ class TemporalFusion:
             history = self.person_history[tid]
             
             # Store scores
-            violence_score = violence_results.get('smooth_prob', 0.0)
+            violence_score = violence_results.get(
+                'risk_prob', violence_results.get('smooth_prob', 0.0)
+            )
             weapon_score = weapon_results.get(tid, {}).get('smooth_score', 0.0)
             loitering_score = loitering_results.get(tid, {}).get('smooth_score', 0.0)
             
@@ -139,7 +143,9 @@ class TemporalFusion:
                 continue
             
             history = self.person_history[tid]
-            violence = violence_results.get('smooth_prob', 0.0)
+            violence = violence_results.get(
+                'risk_prob', violence_results.get('smooth_prob', 0.0)
+            )
             weapon_data = weapon_results.get(tid, {})
             loitering_data = loitering_results.get(tid, {})
             
@@ -177,7 +183,11 @@ class TemporalFusion:
                 escalation_factor, fused_score
             )
             
-            # ===== Apply Persistent Threat Tracking =====
+            # ===== Temporal Hysteresis + Persistent Threat Tracking =====
+            # A detector output can move a few points around a threshold from
+            # one frame to the next. Confirm a transition before changing the
+            # operator-facing label so boxes and alarms do not flicker.
+            threat_level = self._stabilize_threat_level(threat_level, history)
             # Once CRITICAL, stay HIGH until person leaves (grace period 10 frames)
             threat_level = self._apply_persistent_threat_tracking(tid, threat_level, history)
             
@@ -312,7 +322,7 @@ class TemporalFusion:
         history = self.person_history[track_id]
         violence_vals = list(history.violence_history)
         
-        if len(violence_vals) < 5:
+        if len(violence_vals) < 10:
             return 1.0
         
         # Check for rapid increase
@@ -322,7 +332,11 @@ class TemporalFusion:
         recent_trend = np.mean(recent) if recent else 0.0
         older_trend = np.mean(older) if older else 0.0
         
-        escalation = recent_trend / (older_trend + 1e-6)
+        # A near-zero warm-up baseline used to create a 2x escalation spike
+        # from ordinary score noise. Escalate only after a meaningful baseline.
+        if older_trend < 0.15 or recent_trend <= older_trend * 1.20:
+            return 1.0
+        escalation = recent_trend / older_trend
         
         # Also check for sustained elevation
         if recent_trend > 0.6 and len([v for v in recent if v > 0.6]) >= 3:
@@ -510,6 +524,29 @@ class TemporalFusion:
         # Normal case: use computed threat
         history.last_threat_level = computed_name
         return computed_threat_level
+
+    def _stabilize_threat_level(self, computed_level, history):
+        """Apply short confirmation windows to threat-level transitions."""
+        previous = ThreatLevel[history.last_threat_level]
+        if computed_level == previous:
+            history.pending_threat_level = previous.name
+            history.pending_threat_frames = 0
+            return previous
+
+        if history.pending_threat_level == computed_level.name:
+            history.pending_threat_frames += 1
+        else:
+            history.pending_threat_level = computed_level.name
+            history.pending_threat_frames = 1
+
+        # Escalation is already based on temporally-confirmed signals, but is
+        # still held for two frames; clearing waits longer to prevent chatter.
+        required_frames = 2 if computed_level.value > previous.value else 4
+        if history.pending_threat_frames >= required_frames:
+            history.pending_threat_frames = 0
+            history.last_threat_level = computed_level.name
+            return computed_level
+        return previous
     
     def _threat_level_value(self, threat_name):
         """Get numeric value of threat level by name."""

@@ -64,6 +64,7 @@ DEFAULT_WARNING_THRESHOLD = 0.45
 
 # Inference smoothing
 CONSECUTIVE_ALERT_FRAMES = 5  # Frames needed for sustained alert
+VIOLENCE_MIN_PERSONS = 2  # This model detects interpersonal violence, not solo motion
 
 # Per-module parameters
 # Gun detection parameters
@@ -85,6 +86,8 @@ WEAPON_CONFIDENCE_THRESHOLD = 0.25  # Fallback for unknown weapon types
 WEAPON_TEMPORAL_BUFFER = 10  # Keep weapon detection active for N frames after detection
 WEAPON_CONFIDENCE_BOOST = 0.35  # Boost confidence if weapon was recently detected
 WEAPON_EMA_DECISION_THRESHOLD = 0.20  # Report weapon if smooth_score > this threshold
+WEAPON_MIN_CONFIRMED_SCORE = 0.50  # Do not alert on weak, transient weapon scores
+WEAPON_CONFIRMATION_FRAMES = 3  # Require evidence in at least 2 of the last 3 frames
 WEAPON_SPATIAL_THRESHOLD = 0.15  # Max normalized distance weapon can move between frames (0-1)
 WEAPON_CLASS_CONSISTENCY_FRAMES = 3  # Require weapon class to be consistent over N frames
 WEAPON_HISTORY_AGREEMENT_THRESHOLD = 0.55  # Require 55% class consistency (stricter)
@@ -104,3 +107,15 @@ NORMAL_COLOR = (60, 200, 60)         # Green (BGR)
 
 # Frame processing
 FRAME_SKIP = 2  # Process every Nth frame
+
+# Live pipeline settings. Keep full-resolution inference by default so live
+# detection uses the same model inputs as offline processing. If a deployment
+# needs lower latency, operators can deliberately reduce PROCESS_SCALE.
+REALTIME_WINDOW_NAME = 'Threat Detection - Live'
+REALTIME_TARGET_FPS = 30
+REALTIME_DISPLAY_SCALE = 1.0
+REALTIME_PROCESS_SCALE = 1.0
+REALTIME_WINDOW_WIDTH = 1280
+REALTIME_WINDOW_HEIGHT = 720
+REALTIME_RECORDING_CODEC = 'mp4v'
+REALTIME_MAX_READ_FAILURES = 30

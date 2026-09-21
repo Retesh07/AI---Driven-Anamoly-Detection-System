@@ -11,6 +11,7 @@ import cv2
 import json
 import time
 import shutil
+import threading
 import numpy as np
 import torch
 from collections import defaultdict
@@ -43,6 +44,70 @@ try:
     import supervision as sv
 except ImportError:
     raise ImportError("Please install: pip install ultralytics supervision")
+
+
+class LatestFrameCapture:
+    """Read a camera on a background thread and retain only its newest frame.
+
+    OpenCV's normal ``read`` loop can accumulate seconds of stale RTSP frames
+    when inference is slower than the source.  This small bounded buffer keeps
+    display and alerting latency low by deliberately dropping old frames.
+    """
+
+    def __init__(self, source):
+        self.source = source
+        self.cap = None
+        self._frame = None
+        self._sequence = 0
+        self._failed = False
+        self._stopped = threading.Event()
+        self._lock = threading.Lock()
+        self._thread = None
+
+    def start(self):
+        self.cap = cv2.VideoCapture(self.source)
+        # Best-effort: not every OpenCV backend honours this setting.
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if not self.cap.isOpened():
+            raise RuntimeError(f'Cannot open camera source: {self.source}')
+        self._thread = threading.Thread(target=self._reader, name='latest-frame-capture', daemon=True)
+        self._thread.start()
+        return self
+
+    def _reader(self):
+        failures = 0
+        while not self._stopped.is_set():
+            ok, frame = self.cap.read()
+            if not ok:
+                failures += 1
+                if failures >= constants.REALTIME_MAX_READ_FAILURES:
+                    self._failed = True
+                    return
+                time.sleep(0.03)
+                continue
+            failures = 0
+            with self._lock:
+                self._frame = frame
+                self._sequence += 1
+
+    def read_latest(self, last_sequence):
+        """Return ``(sequence, frame)`` only when a newer frame is available."""
+        with self._lock:
+            if self._sequence == last_sequence or self._frame is None:
+                return last_sequence, None
+            return self._sequence, self._frame.copy()
+
+    @property
+    def failed(self):
+        return self._failed
+
+    def stop(self):
+        self._stopped.set()
+        # Releasing first unblocks a backend currently waiting in ``read``.
+        if self.cap is not None:
+            self.cap.release()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
 
 
 class ThreatDetectionPipeline:
@@ -277,10 +342,11 @@ class ThreatDetectionPipeline:
                     overall_threat_level = 'MEDIUM'
                 
                 draw_enhanced_detections(frame, det_info, pose_result, fused_results, identity_results)
+                display_violence = violence_result.get('risk_prob', violence_result['smooth_prob'])
                 draw_enhanced_hud(frame, {
-                    'raw': violence_result['raw_prob'],
-                    'smooth': violence_result['smooth_prob'],
-                    'status': violence_result['status']
+                    'raw': display_violence,
+                    'smooth': display_violence,
+                    'status': violence_result['status'] if display_violence else 'NORMAL'
                 }, overall_threat_level, list(fused_results.values()), fps_disp, processed)
                 draw_attention_bar(frame, violence_result['attention_weights'], bar_height=18)
                 
@@ -470,3 +536,228 @@ class ThreatDetectionPipeline:
             print(f'  Output: {output_video}')
         
         return results
+
+    def process_realtime(self, camera_source=0, output_dir='./results',
+                         violence_threshold=None, warning_threshold=None):
+        """Run the complete detection stack on a live webcam or network stream.
+
+        The capture thread intentionally drops frames that inference cannot keep
+        up with.  Consequently, detections represent the newest available scene
+        rather than delayed historical video.  This method does not generate
+        offline charts or keep an unbounded timeline in memory.
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        if violence_threshold is not None:
+            self.violence_detector.set_thresholds(
+                violence_threshold, warning_threshold or constants.DEFAULT_WARNING_THRESHOLD
+            )
+
+        # A live session must not inherit temporal state from an earlier file or
+        # camera session.
+        self.violence_detector.reset()
+        self.weapon_detector.reset()
+        self.loitering_analyzer.reset()
+        self.face_recognizer.reset()
+        self.tracker.reset()
+        self.person_tracker.reset()
+        self.fusion.reset()
+
+        capture = LatestFrameCapture(camera_source).start()
+        camera_fps = capture.cap.get(cv2.CAP_PROP_FPS) or constants.REALTIME_TARGET_FPS
+        writer = None
+        recording = False
+        fullscreen = False
+        paused = False
+        processed = 0
+        dropped = 0
+        snapshots = []
+        recordings = []
+        last_sequence = 0
+        fps_disp = 0.0
+        last_processed_at = None
+        last_frame = None
+        window_created = False
+
+        def output_path(prefix, suffix):
+            # Nanoseconds make repeated snapshots/toggle cycles collision-free.
+            return output_dir / f'{prefix}_{time.strftime("%Y%m%d_%H%M%S")}_{time.time_ns() % 1_000_000_000:09d}{suffix}'
+
+        def toggle_recording(frame):
+            """Start/stop a writer, returning its current instance and state."""
+            nonlocal writer, recording
+            if recording:
+                writer.release()
+                writer = None
+                recording = False
+                if self.verbose:
+                    print('[Pipeline] Recording stopped')
+                return
+
+            h, w = frame.shape[:2]
+            recording_path = output_path('live_recording', '.mp4')
+            codec = cv2.VideoWriter_fourcc(*constants.REALTIME_RECORDING_CODEC)
+            recording_fps = fps_disp if fps_disp >= 1.0 else camera_fps
+            writer = cv2.VideoWriter(str(recording_path), codec,
+                                     recording_fps, (w, h))
+            if not writer.isOpened():
+                writer.release()
+                writer = None
+                raise RuntimeError(f'Cannot create recording: {recording_path}')
+            recordings.append(str(recording_path))
+            recording = True
+            if self.verbose:
+                print(f'[Pipeline] Recording: {recording_path}')
+
+        try:
+            # The inference frame remains full resolution; only the OpenCV
+            # presentation window is constrained so a 1080p/4K camera does
+            # not open a cropped or oversized desktop window.
+            cv2.namedWindow(
+                constants.REALTIME_WINDOW_NAME,
+                cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO,
+            )
+            cv2.resizeWindow(
+                constants.REALTIME_WINDOW_NAME,
+                constants.REALTIME_WINDOW_WIDTH,
+                constants.REALTIME_WINDOW_HEIGHT,
+            )
+            window_created = True
+
+            while True:
+                if not paused:
+                    sequence, frame = capture.read_latest(last_sequence)
+                    if frame is None:
+                        if capture.failed:
+                            raise RuntimeError('Camera stream stopped delivering frames')
+                        key = cv2.waitKey(10) & 0xFF
+                    else:
+                        dropped += max(0, sequence - last_sequence - 1)
+                        last_sequence = sequence
+                        if constants.REALTIME_PROCESS_SCALE != 1.0:
+                            frame = cv2.resize(
+                                frame, None,
+                                fx=constants.REALTIME_PROCESS_SCALE,
+                                fy=constants.REALTIME_PROCESS_SCALE,
+                                interpolation=cv2.INTER_AREA,
+                            )
+
+                        h, w = frame.shape[:2]
+                        started_at = time.perf_counter()
+                        pose_result = self.pose_model(
+                            frame, device=0 if self.device == 'cuda' else 'cpu',
+                            conf=constants.POSE_CONFIDENCE_THRESHOLD, verbose=False,
+                        )[0]
+                        dets = sv.Detections.from_ultralytics(pose_result)
+                        frame_features, det_info = extract_frame_features(
+                            frame, pose_result, dets, self.tracker,
+                            self.person_tracker.prev_centers,
+                            self.person_tracker.prev_vel,
+                            self.person_tracker.prev_acc,
+                            self.person_tracker.prev_kps,
+                        )
+                        detection_ids = [info['tid'] for info in det_info]
+                        self.person_tracker.update(detection_ids)
+                        person_bboxes = {info['tid']: info['bbox'] for info in det_info}
+                        identity_results = self.face_recognizer.update(frame, person_bboxes)
+                        violence_result = self.violence_detector.update(frame_features, len(det_info))
+                        weapon_results = self.weapon_detector.update(
+                            frame, person_bboxes, pose_result=pose_result, det_info=det_info
+                        )
+
+                        # Loitering uses samples rather than wall-clock timestamps.
+                        # Keep its seconds conversion aligned with the measured live rate.
+                        if fps_disp > 0:
+                            self.loitering_analyzer.fps = max(1.0, fps_disp)
+                        loitering_results = self.loitering_analyzer.update(
+                            person_bboxes, frame_shape=(h, w), identity_info=identity_results
+                        )
+                        person_positions = {
+                            tid: (((bbox[0] + bbox[2]) / 2) / w, ((bbox[1] + bbox[3]) / 2) / h)
+                            for tid, bbox in person_bboxes.items()
+                        }
+                        fused_results, _ = self.fusion.process_frame(
+                            violence_result, weapon_results, loitering_results,
+                            person_positions, list(person_bboxes), identity_results=identity_results,
+                        )
+
+                        overall_threat_level = 'LOW'
+                        for level in ('CRITICAL', 'HIGH', 'MEDIUM'):
+                            if any(item['threat_level'] == level for item in fused_results.values()):
+                                overall_threat_level = level
+                                break
+                        processed += 1
+                        elapsed = time.perf_counter() - started_at
+                        instantaneous_fps = 1.0 / max(elapsed, 1e-6)
+                        fps_disp = instantaneous_fps if fps_disp == 0 else 0.2 * instantaneous_fps + 0.8 * fps_disp
+                        last_processed_at = time.time()
+
+                        draw_enhanced_detections(frame, det_info, pose_result, fused_results, identity_results)
+                        display_violence = violence_result.get('risk_prob', violence_result['smooth_prob'])
+                        draw_enhanced_hud(frame, {
+                            'raw': display_violence,
+                            'smooth': display_violence,
+                            'status': violence_result['status'] if display_violence else 'NORMAL',
+                        }, overall_threat_level, list(fused_results.values()), fps_disp, processed)
+                        draw_attention_bar(frame, violence_result['attention_weights'], bar_height=18)
+                        if recording:
+                            cv2.putText(frame, 'REC', (w - 75, 65), cv2.FONT_HERSHEY_DUPLEX,
+                                        0.7, (0, 0, 255), 2, cv2.LINE_AA)
+                            writer.write(frame)
+
+                        last_frame = frame
+                        display_frame = frame
+                        if constants.REALTIME_DISPLAY_SCALE != 1.0:
+                            display_frame = cv2.resize(frame, None,
+                                                       fx=constants.REALTIME_DISPLAY_SCALE,
+                                                       fy=constants.REALTIME_DISPLAY_SCALE)
+                        cv2.imshow(constants.REALTIME_WINDOW_NAME, display_frame)
+                        key = cv2.waitKey(1) & 0xFF
+                else:
+                    if last_frame is not None:
+                        paused_frame = last_frame.copy()
+                        cv2.putText(paused_frame, 'PAUSED', (20, paused_frame.shape[0] - 35),
+                                    cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 220, 255), 2, cv2.LINE_AA)
+                        cv2.imshow(constants.REALTIME_WINDOW_NAME, paused_frame)
+                    key = cv2.waitKey(30) & 0xFF
+
+                if key in (ord('q'), ord('Q'), 27):
+                    break
+                if key in (ord(' '),):
+                    paused = not paused
+                elif key in (ord('f'), ord('F')):
+                    fullscreen = not fullscreen
+                    cv2.setWindowProperty(constants.REALTIME_WINDOW_NAME,
+                                          cv2.WND_PROP_FULLSCREEN,
+                                          cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
+                elif key in (ord('s'), ord('S')) and last_frame is not None:
+                    screenshot_path = output_path('live_snapshot', '.png')
+                    if not cv2.imwrite(str(screenshot_path), last_frame):
+                        raise RuntimeError(f'Cannot save screenshot: {screenshot_path}')
+                    snapshots.append(str(screenshot_path))
+                    if self.verbose:
+                        print(f'[Pipeline] Snapshot: {screenshot_path}')
+                elif key in (ord('r'), ord('R')) and last_frame is not None:
+                    toggle_recording(last_frame)
+
+                if window_created and cv2.getWindowProperty(constants.REALTIME_WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
+                    break
+        finally:
+            if writer is not None:
+                writer.release()
+            capture.stop()
+            if window_created:
+                cv2.destroyWindow(constants.REALTIME_WINDOW_NAME)
+
+        return {
+            'camera_source': str(camera_source),
+            'snapshots': snapshots,
+            'recordings': recordings,
+            'processing_stats': {
+                'processed_frames': processed,
+                'dropped_frames': dropped,
+                'processing_fps': round(fps_disp, 1),
+                'last_processed_at': last_processed_at,
+            },
+        }
