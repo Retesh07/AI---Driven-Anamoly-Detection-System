@@ -8,29 +8,29 @@ An **Edge AI powered surveillance intelligence system** designed to detect aggre
 
 The system processes each incoming frame through multiple specialized AI branches, analyzes behavior over time, computes a risk score, and generates alerts on the edge device.
 Input Frame
-Γö£ΓöÇΓöÇ Pose Branch ΓåÆ Aggression Score
+├── Pose Branch → Aggression Score
 
-Γö£ΓöÇΓöÇ Weapon Branch ΓåÆ Weapon + Intent Score
+├── Weapon Branch → Weapon + Intent Score
 
-Γö£ΓöÇΓöÇ Identity Branch ΓåÆ Known vs Unknown
+├── Identity Branch → Known vs Unknown
 
-ΓööΓöÇΓöÇ Tracking Module ΓåÆ Persistent ID over time
+└── Tracking Module → Persistent ID over time
 
-Γåô
+↓
 
 Behavioral Analyzer
 
-Γö£ΓöÇΓöÇ Violence detection
+├── Violence detection
 
-Γö£ΓöÇΓöÇ Weaponized intent detection
+├── Weaponized intent detection
 
-ΓööΓöÇΓöÇ Loitering detection (unknown only)
+└── Loitering detection (unknown only)
 
-Γåô
+↓
 
 Risk Scoring Engine
 
-Γåô
+↓
 
 Edge Device Alert System
 
@@ -155,5 +155,4 @@ Triggers real-time alerts based on risk level.
 - PyTorch / TensorFlow
 - DeepSORT / ByteTrack
 - Edge Device: Jetson
-
 
