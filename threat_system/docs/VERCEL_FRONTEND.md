@@ -1,5 +1,10 @@
 # Test Sentinel from Vercel
 
+Live frontend: [sentinel-edge-monitor.vercel.app](https://sentinel-edge-monitor.vercel.app).
+The current production version was deployed directly from the committed source.
+Automatic deployments require granting Vercel's GitHub integration access to this
+repository and linking the Vercel project with Root Directory `frontend`.
+
 The frontend can be deployed as static files on Vercel. Detection continues on a
 host on the Pi's network. The Pi gateway only exposes `/health` and `/stream.mjpg`;
 it does not run the threat models or expose the dashboard API.
@@ -30,10 +35,10 @@ Python environment and model files. From `threat_system`, set a strong secret
 environment variable named `DASHBOARD_ACCESS_TOKEN` privately, then run:
 
 ```sh
-python3 dashboard.py --allow-origin https://YOUR-PROJECT.vercel.app
+python3 dashboard.py --allow-origin https://sentinel-edge-monitor.vercel.app
 ```
 
-Replace the frontend origin with its actual URL, without a trailing slash. Each
+Use a different frontend origin if needed, without a trailing slash. Each
 preview URL is a different origin; add another `--allow-origin` for each exact
 origin that should be allowed. Wildcards are not supported. Remote browser access
 requires the access key; requests without it are rejected. Keys are not returned

@@ -2,6 +2,8 @@
 
 ## Browser alert dashboard
 
+**Live frontend:** [sentinel-edge-monitor.vercel.app](https://sentinel-edge-monitor.vercel.app)
+
 Run `python3 main.py --webcam --camera-source http://<pi-ip>:8000/stream.mjpg --dashboard --headless`
 from `threat_system`, then open [localhost:8080](http://127.0.0.1:8080).
 The dashboard shows annotated footage, live threat levels and reviewable alerts.
