@@ -25,3 +25,7 @@ __pycache__/
 .ruff_cache/
 results/
 collected_assets/
+
+# Dashboard setup guides
+!docs/ALERT_DASHBOARD.md
+!docs/VERCEL_FRONTEND.md

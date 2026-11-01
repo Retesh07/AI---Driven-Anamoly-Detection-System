@@ -1,5 +1,16 @@
 # Context-Aware Threat Detection System v3.0
 
+## Browser alert dashboard
+
+Run `python3 main.py --webcam --camera-source http://<pi-ip>:8000/stream.mjpg --dashboard --headless`
+from `threat_system`, then open [localhost:8080](http://127.0.0.1:8080).
+The dashboard shows annotated footage, live threat levels and reviewable alerts.
+For a model-free preview, use `python3 dashboard.py --demo` instead.
+See [setup, alert behavior and LAN access](threat_system/docs/ALERT_DASHBOARD.md).
+For browser-based Pi connection, run `python3 dashboard.py` and use **Connect Raspberry Pi**.
+The browser UI lives in [`frontend/`](frontend), which is the Vercel project's Root Directory.
+Follow [the Vercel setup](threat_system/docs/VERCEL_FRONTEND.md) to connect an HTTPS monitoring host on the Pi's network.
+
 A production-grade, real-time AI-driven anomaly detection system combining violence detection, weapon recognition, and loitering analysis for CCTV surveillance. **Now with enhanced temporal fusion and person-to-person interaction modeling.**
 
 ## 🚀 What's New in v3.0

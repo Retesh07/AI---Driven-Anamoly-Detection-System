@@ -65,10 +65,16 @@ class LatestFrameCapture:
         self._thread = None
 
     def start(self):
-        self.cap = cv2.VideoCapture(self.source)
+        if isinstance(self.source, str) and self.source.startswith(('http://', 'https://')):
+            self.cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG, [
+                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000,
+            ])
+        else:
+            self.cap = cv2.VideoCapture(self.source)
         # Best-effort: not every OpenCV backend honours this setting.
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self.cap.isOpened():
+            self.cap.release()
             raise RuntimeError(f'Cannot open camera source: {self.source}')
         self._thread = threading.Thread(target=self._reader, name='latest-frame-capture', daemon=True)
         self._thread.start()
@@ -189,7 +195,7 @@ class ThreatDetectionPipeline:
     def process_video(self, video_path, output_dir=None, 
                      violence_threshold=None, warning_threshold=None,
                      ema_alpha=constants.EMA_ALPHA,
-                     export_json=True):
+                     export_json=True, dashboard=None):
         """
         Process video and generate threat detection output.
         
@@ -350,6 +356,9 @@ class ThreatDetectionPipeline:
                 }, overall_threat_level, list(fused_results.values()), fps_disp, processed)
                 draw_attention_bar(frame, violence_result['attention_weights'], bar_height=18)
                 
+                if dashboard is not None:
+                    dashboard.publish(fused_results, frame, fps_disp, processed)
+
                 # ===== Write Frame =====
                 writer.write(frame)
                 
@@ -538,7 +547,8 @@ class ThreatDetectionPipeline:
         return results
 
     def process_realtime(self, camera_source=0, output_dir='./results',
-                         violence_threshold=None, warning_threshold=None):
+                         violence_threshold=None, warning_threshold=None,
+                         dashboard=None, headless=False, stop_event=None):
         """Run the complete detection stack on a live webcam or network stream.
 
         The capture thread intentionally drops frames that inference cannot keep
@@ -614,24 +624,29 @@ class ThreatDetectionPipeline:
             # The inference frame remains full resolution; only the OpenCV
             # presentation window is constrained so a 1080p/4K camera does
             # not open a cropped or oversized desktop window.
-            cv2.namedWindow(
-                constants.REALTIME_WINDOW_NAME,
-                cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO,
-            )
-            cv2.resizeWindow(
-                constants.REALTIME_WINDOW_NAME,
-                constants.REALTIME_WINDOW_WIDTH,
-                constants.REALTIME_WINDOW_HEIGHT,
-            )
-            window_created = True
+            if not headless:
+                cv2.namedWindow(
+                    constants.REALTIME_WINDOW_NAME,
+                    cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO,
+                )
+                cv2.resizeWindow(
+                    constants.REALTIME_WINDOW_NAME,
+                    constants.REALTIME_WINDOW_WIDTH,
+                    constants.REALTIME_WINDOW_HEIGHT,
+                )
+                window_created = True
 
-            while True:
+            while stop_event is None or not stop_event.is_set():
                 if not paused:
                     sequence, frame = capture.read_latest(last_sequence)
                     if frame is None:
                         if capture.failed:
                             raise RuntimeError('Camera stream stopped delivering frames')
-                        key = cv2.waitKey(10) & 0xFF
+                        if headless:
+                            time.sleep(0.01)
+                            key = -1
+                        else:
+                            key = cv2.waitKey(10) & 0xFF
                     else:
                         dropped += max(0, sequence - last_sequence - 1)
                         last_sequence = sequence
@@ -707,13 +722,17 @@ class ThreatDetectionPipeline:
                             writer.write(frame)
 
                         last_frame = frame
-                        display_frame = frame
-                        if constants.REALTIME_DISPLAY_SCALE != 1.0:
-                            display_frame = cv2.resize(frame, None,
-                                                       fx=constants.REALTIME_DISPLAY_SCALE,
-                                                       fy=constants.REALTIME_DISPLAY_SCALE)
-                        cv2.imshow(constants.REALTIME_WINDOW_NAME, display_frame)
-                        key = cv2.waitKey(1) & 0xFF
+                        if dashboard is not None:
+                            dashboard.publish(fused_results, frame, fps_disp, processed)
+                        key = -1
+                        if not headless:
+                            display_frame = frame
+                            if constants.REALTIME_DISPLAY_SCALE != 1.0:
+                                display_frame = cv2.resize(frame, None,
+                                                           fx=constants.REALTIME_DISPLAY_SCALE,
+                                                           fy=constants.REALTIME_DISPLAY_SCALE)
+                            cv2.imshow(constants.REALTIME_WINDOW_NAME, display_frame)
+                            key = cv2.waitKey(1) & 0xFF
                 else:
                     if last_frame is not None:
                         paused_frame = last_frame.copy()

@@ -54,10 +54,17 @@ Examples:
     parser.add_argument('--gpu', action='store_true', help='Use GPU (default: auto-detect)')
     parser.add_argument('--cpu', action='store_true', help='Force CPU mode')
     
+    parser.add_argument('--dashboard', action='store_true', help='Serve the alert dashboard')
+    parser.add_argument('--dashboard-host', default='127.0.0.1', help='Dashboard bind address (default: localhost)')
+    parser.add_argument('--dashboard-port', type=int, default=8080, help='Dashboard HTTP port (default: 8080)')
+    parser.add_argument('--headless', action='store_true', help='Run live inference without an OpenCV window; stop with Ctrl+C')
+
     # Other options
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     
     args = parser.parse_args()
+    if args.headless and not args.webcam:
+        parser.error('--headless requires --webcam')
     
     # ===== Device Selection =====
     if args.cpu:
@@ -92,14 +99,21 @@ Examples:
         return 1
     
     # ===== Process Input =====
+    dashboard = None
     try:
+        if args.dashboard:
+            from dashboard import Dashboard
+            dashboard = Dashboard(source=args.video or args.camera_source)
+            port = dashboard.start(args.dashboard_host, args.dashboard_port)
+            print(f'[Dashboard] http://{args.dashboard_host}:{port}')
         if args.video:
             results = pipeline.process_video(
                 video_path=args.video,
                 output_dir=args.output,
                 violence_threshold=args.violence_threshold,
                 warning_threshold=args.warning_threshold,
-                export_json=True
+                export_json=True,
+                dashboard=dashboard
             )
             
             print(f'\\n[Success] Results saved to: {args.output}')
@@ -114,6 +128,8 @@ Examples:
                 output_dir=args.output,
                 violence_threshold=args.violence_threshold,
                 warning_threshold=args.warning_threshold,
+                dashboard=dashboard,
+                headless=args.headless,
             )
             print(f"\n[Success] Live session ended. Processed {results['processing_stats']['processed_frames']} frames.")
             return 0
@@ -126,6 +142,9 @@ Examples:
         import traceback
         traceback.print_exc()
         return 1
+    finally:
+        if dashboard is not None:
+            dashboard.stop()
 
 
 if __name__ == '__main__':
