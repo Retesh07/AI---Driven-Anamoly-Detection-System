@@ -35,10 +35,18 @@
         <article class="metric"><div class="metric-label">Processing speed <span class="metric-symbol">⌁</span></div><div class="metric-value"><span id="fps">—</span><small> FPS</small></div><div class="metric-note" id="frame-count">Awaiting processed frames</div></article>
       </section>
       <div class="monitor-grid">
+        <div class="monitor-main">
         <section class="panel camera-panel" aria-labelledby="camera-heading"><div class="panel-heading"><div><span class="section-index">01</span><h2 id="camera-heading">Live monitor</h2><span class="label">CAM 01</span></div><span id="live-label" class="live-label"><span class="tiny-dot"></span> WAITING</span></div>
           <div class="camera-view"><img id="camera-image" alt="Latest annotated camera frame from the threat detection pipeline" hidden><div class="camera-placeholder" id="camera-placeholder"><div class="viewfinder"><svg viewBox="0 0 48 48"><path d="M15 5H5v10M33 5h10v10M5 33v10h10M43 33v10H33"/><circle cx="24" cy="24" r="9"/><circle cx="24" cy="24" r="3"/></svg></div><h3 id="camera-empty-title">Waiting for the camera</h3><p id="camera-empty-note">The annotated feed appears when inference starts.</p><span class="feed-detail">RASPBERRY PI → DETECTION HOST → SENTINEL</span></div><div class="camera-overlay"><span><span class="tiny-dot"></span> EDGE CAMERA / 01</span><span id="camera-time">NO SIGNAL</span></div></div>
           <div class="camera-footer"><div><span class="camera-indicator"></span><span>Primary camera<small id="source-label">Connecting to detection host</small></span></div><span class="preview-label" id="preview-kind">ANNOTATED PREVIEW · 1 FPS</span></div>
         </section>
+        <section class="panel people-panel" aria-labelledby="people-heading">
+          <div class="panel-heading"><div><h2 id="people-heading">People identified</h2></div><span id="identified-count" class="label">UNAVAILABLE</span></div>
+          <p id="people-note" class="people-note" role="status">Waiting for inference</p>
+          <div class="table-scroll"><table aria-label="People in the latest processed frame"><thead><tr><th scope="col">IDENTITY ESTIMATE</th><th scope="col">TRACK</th><th scope="col">THREAT LEVEL</th></tr></thead><tbody id="people-rows"></tbody></table></div>
+          <div id="people-empty" class="empty-state"><p>Waiting for face recognition results.</p></div>
+        </section>
+        </div>
         <aside class="monitor-side">
           <section class="panel priority-panel"><div class="panel-heading"><div><span class="section-index">02</span><h2>Latest alert</h2></div><span class="pulse-icon">↗</span></div><div id="latest-alert" class="latest-content"><span class="clear-icon">✓</span><h3>No alerts yet</h3><p>Suspicious activity will appear here as it is detected.</p></div></section>
           <section class="panel connection-panel" id="connection">

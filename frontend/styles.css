@@ -75,6 +75,11 @@ h1>span{color:var(--accent)}
 .metric-note{font-size:9px;color:#84927d;display:flex;gap:6px;align-items:center;line-height:1.5}
 .amber-dot{background:var(--amber)}
 .monitor-grid{display:grid;grid-template-columns:minmax(0,2.1fr) minmax(270px,1fr);gap:22px;margin-bottom:25px}
+.monitor-main{display:flex;flex-direction:column;gap:17px;min-width:0}
+.monitor-main>.camera-panel{flex:1}
+.people-panel{flex-shrink:0}
+.people-note{margin:0 20px 16px;color:var(--muted);font-size:11px;line-height:1.6}
+.person-name{color:var(--text);font-size:12px;white-space:normal;overflow-wrap:anywhere;max-width:220px}
 .panel{border:1px solid var(--line);border-radius:7px;background:var(--panel);overflow:hidden}
 .panel-heading{height:61px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;gap:10px}
 .panel-heading>div{display:flex;align-items:center;gap:11px}

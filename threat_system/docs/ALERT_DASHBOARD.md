@@ -56,6 +56,11 @@ Connecting a Pi exits demo mode immediately.
 
 ## Alerts and review
 
+- **People identified**, below the live monitor, lists each current track's identity
+  estimate (name or Unknown), track ID and threat level, even without an alert.
+  The list follows the latest processed frame and clears when inference becomes
+  stale or unavailable. Camera-only mode cannot identify people; demo identities
+  are explicitly labelled as simulated.
 - Uses the existing fusion categories and messages; does not change thresholds.
 - Creates an event when a non-normal track appears or its severity/messages change.
   Continuous identical detections are deduplicated. A track returning after it

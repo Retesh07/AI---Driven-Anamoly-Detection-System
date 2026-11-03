@@ -48,6 +48,16 @@ function monitoringOrigin(value, pageOrigin, pageProtocol) {
   return url.origin;
 }
 
+function peopleView(state, failed, now = Date.now() / 1000) {
+  const { inferenceLive, cameraLive, status } = connectionView(state, failed, now);
+  return {
+    persons: inferenceLive ? state.persons : [],
+    available: inferenceLive,
+    note: inferenceLive ? state.demo ? "Simulated identities · Demo mode" : "Identity estimates from the latest processed frame. Names may change as recognition updates."
+      : cameraLive ? "Camera only · Face recognition is offline" : status,
+  };
+}
+
 function startDashboard() {
   const $ = id => document.getElementById(id);
   const node = (tag, className, text) => {
@@ -173,6 +183,21 @@ function startDashboard() {
       $("camera-empty-title").textContent = requestFailed ? "Detection host disconnected" : phase === "checking" ? "Connecting to Raspberry Pi" : phase === "starting" ? "Starting detection" : timestamp ? "Camera feed is stale" : "Waiting for the camera";
       $("camera-empty-note").textContent = state?.can_connect ? "Use Connect Raspberry Pi to choose the camera gateway." : "Check that the camera and detection pipeline are running.";
     }
+    const people = peopleView(state, requestFailed);
+    $("identified-count").textContent = people.available ? `${people.persons.length} IN FRAME` : "UNAVAILABLE";
+    $("people-note").textContent = people.note;
+    const rows = document.createDocumentFragment();
+    people.persons.forEach(person => {
+      const row = node("tr");
+      const level = node("td");
+      level.append(badge(person.level));
+      row.append(node("td", "person-name", person.identity === "unknown" ? "Unknown" : person.identity),
+        node("td", "", `#${person.track_id}`), level);
+      rows.append(row);
+    });
+    $("people-rows").replaceChildren(rows);
+    $("people-empty").hidden = people.persons.length > 0;
+    $("people-empty").querySelector("p").textContent = people.available ? "No people in the latest processed frame." : "Waiting for face recognition results.";
     return { connected, cameraLive, frameAt };
   }
 
@@ -411,4 +436,4 @@ function startDashboard() {
 }
 
 if (typeof document !== "undefined") startDashboard();
-if (typeof module !== "undefined") module.exports = { alertTitle, filterEvents, connectionView, monitoringOrigin };
+if (typeof module !== "undefined") module.exports = { alertTitle, filterEvents, connectionView, monitoringOrigin, peopleView };

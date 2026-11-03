@@ -57,6 +57,17 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(dashboard.snapshot()["events"], [])
         json.dumps(dashboard.snapshot(), allow_nan=False)
 
+    def test_current_identities_update_without_alerts_and_clear_when_people_leave(self):
+        dashboard = Dashboard()
+        dashboard.publish({7: {**detection("NORMAL"), "identity_name": "Alex"}, 8: detection("NORMAL")})
+        state = dashboard.snapshot()
+        self.assertEqual([(p["track_id"], p["identity"]) for p in state["persons"]], [("7", "Alex"), ("8", "unknown")])
+        self.assertEqual(state["events"], [])
+        dashboard.publish({7: {**detection("NORMAL"), "identity_name": "Jordan"}})
+        self.assertEqual([p["identity"] for p in dashboard.snapshot()["persons"]], ["Jordan"])
+        dashboard.publish({})
+        self.assertEqual(dashboard.snapshot()["persons"], [])
+
     def test_http_serves_ui_state_and_frame_and_rejects_other_paths(self):
         dashboard = Dashboard(source="http://pi:8000/stream.mjpg")
         port = dashboard.start(port=0)
