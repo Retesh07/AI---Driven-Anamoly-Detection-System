@@ -54,7 +54,7 @@ def _get_eye_cascade():
     return cascade
 
 
-def _detect_largest_face(image, cascade, min_face_size):
+def _detect_largest_face(image, cascade, min_face_size, require_single_face=False):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.equalizeHist(gray)
     faces = cascade.detectMultiScale(
@@ -64,7 +64,7 @@ def _detect_largest_face(image, cascade, min_face_size):
         minSize=(min_face_size, min_face_size),
     )
 
-    if len(faces) == 0:
+    if len(faces) == 0 or (require_single_face and len(faces) != 1):
         return None
 
     return max(faces, key=lambda rect: rect[2] * rect[3])
@@ -142,7 +142,7 @@ def _looks_like_cctv_noise(image):
     return brightness < MIN_FACE_BRIGHTNESS or contrast < 24.0
 
 
-def enroll_faces(source_dir, output_dir, overwrite=False, min_face_size=48):
+def enroll_faces(source_dir, output_dir, overwrite=False, min_face_size=48, require_single_face=False):
     source_dir = Path(source_dir)
     output_dir = Path(output_dir)
 
@@ -204,8 +204,11 @@ def enroll_faces(source_dir, output_dir, overwrite=False, min_face_size=48):
                 record_skip('read_failed')
                 continue
 
-            face_rect = _detect_largest_face(image, cascade, min_face_size)
+            face_rect = _detect_largest_face(image, cascade, min_face_size, require_single_face)
             if face_rect is None:
+                if require_single_face:
+                    record_skip('expected_one_face')
+                    continue
                 face_crop = _fallback_portrait_crop(image, min_face_size)
                 detected_face = False
             else:
@@ -231,7 +234,8 @@ def enroll_faces(source_dir, output_dir, overwrite=False, min_face_size=48):
                 record_skip('exists')
                 continue
 
-            cv2.imwrite(str(destination), resized_color)
+            if not cv2.imwrite(str(destination), resized_color):
+                raise RuntimeError('Could not save the enrolled face crop.')
             enrolled_count += 1
             summary['faces_enrolled'] += 1
 

@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { alertTitle, filterEvents, connectionView, monitoringOrigin, peopleView } = require("./app.js");
+const { alertTitle, filterEvents, connectionView, monitoringOrigin, peopleView, validateEnrollment } = require("./app.js");
 
 const events = [
   { id: "one", track_id: "7", level: "MEDIUM", identity: "unknown", messages: ["Prolonged presence"], factors: [], violence: 0.1, weapon: 0, loitering: 0.8 },
@@ -40,4 +40,9 @@ assert.equal(monitoringOrigin("", "http://127.0.0.1:8080", "http:"), "http://127
 for (const address of ["http://192.168.1.50:8080", "https://user:pass@monitor.example", "https://monitor.example/api/state", "https://monitor.example/?token=secret", "ftp://monitor.example", ""]) {
   assert.throws(() => monitoringOrigin(address, "https://sentinel.vercel.app", "https:"));
 }
-console.log("Frontend checks passed: alerts, filters, live identities, connection state, hosted URLs and mixed-content rejection.");
+const photo = { type: "image/jpeg", size: 1024 };
+assert.equal(validateEnrollment(" Alex Smith ", [photo, { type: "image/png", size: 10 * 1024 * 1024 }]), "Alex Smith");
+for (const [name, files] of [["../Alex", [photo]], ["", [photo]], ["a".repeat(65), [photo]], ["Alex", []], ["Alex", Array(6).fill(photo)], ["Alex", [{ ...photo, type: "image/svg+xml" }]], ["Alex", [{ ...photo, size: 0 }]], ["Alex", [{ ...photo, size: 10 * 1024 * 1024 + 1 }]]]) {
+  assert.throws(() => validateEnrollment(name, files));
+}
+console.log("Frontend checks passed: alerts, filters, live identities, enrollment validation, connection state, hosted URLs and mixed-content rejection.");

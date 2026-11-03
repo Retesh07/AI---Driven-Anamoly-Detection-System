@@ -76,6 +76,31 @@ Connecting a Pi exits demo mode immediately.
   present on initial connection are not replayed as desktop notifications. Demo
   notifications are labelled. Closed-page, SMS and email delivery are not included.
 
+## Add faces from the frontend
+
+Below **People identified**, use **Add a person** to enter a name and upload
+1–5 JPEG/PNG photos (up to 10 MB and 12 megapixels each). Each photo must show
+exactly one clear, well-lit face. The host validates the actual image content and
+uses the existing enrollment quality checks; unusable photos are rejected.
+
+Face crops persist in the monitoring laptop's `threat_system/models/faces/<name>/`
+folder, or the pipeline's custom `--face-db` folder when started through `main.py`.
+Using the same name adds photos without replacing existing crops. Uploads go
+directly to the selected monitoring host; Vercel does not store the photos.
+These runtime face files are ignored by Git.
+
+After saving, **restart `main.py` using the same command**. For browser-controlled
+`dashboard.py`, disconnect the camera, wait for it to stop, then reconnect. The
+next recognizer rebuilds its cached templates from the persisted images. An
+already-running recognizer keeps its current templates until restarted.
+Enrollment does not retrain the violence or weapon models or guarantee a match.
+
+The upload API (`POST /api/faces/enroll`) uses the same access key, exact-origin
+checks and dashboard control token as camera controls. Hosted enrollment requires
+the HTTPS monitoring URL and key. Local enrollment works without a Pi connection,
+but the host must have the inference image dependencies installed. Update and
+restart the backend as well as refreshing the frontend to enable this feature.
+
 ## Another device on the LAN
 
 Add `--dashboard-host 0.0.0.0` and visit `http://<host-lan-ip>:8080`.
@@ -94,6 +119,12 @@ cd threat_system
 python3 -m unittest test_dashboard test_camera_gateway -v
 node ../frontend/test_app.cjs
 python3 main.py --help
+```
+
+With the inference image dependencies installed, also run:
+
+```sh
+python3 -m unittest test_face_enrollment -v
 ```
 
 These checks cover alert transitions, deduplication, bounded retention, HTTP

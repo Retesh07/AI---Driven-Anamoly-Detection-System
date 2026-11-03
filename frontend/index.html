@@ -46,6 +46,21 @@
           <div class="table-scroll"><table aria-label="People in the latest processed frame"><thead><tr><th scope="col">IDENTITY ESTIMATE</th><th scope="col">TRACK</th><th scope="col">THREAT LEVEL</th></tr></thead><tbody id="people-rows"></tbody></table></div>
           <div id="people-empty" class="empty-state"><p>Waiting for face recognition results.</p></div>
         </section>
+        <section class="panel enrollment-panel" aria-labelledby="enrollment-heading">
+          <div class="panel-heading"><div><h2 id="enrollment-heading">Add a person</h2></div></div>
+          <p id="enrollment-availability" class="people-note">Connect a monitoring host to add faces.</p>
+          <form id="enrollment-form" class="gateway-form face-form">
+            <fieldset id="enrollment-fields">
+              <label for="face-name">Person's name</label>
+              <input id="face-name" type="text" maxlength="64" placeholder="e.g. Alex" required autocomplete="off" aria-describedby="face-help">
+              <label for="face-photos">Face photos</label>
+              <input id="face-photos" type="file" accept="image/jpeg,image/png" multiple required aria-describedby="face-help">
+              <p id="face-help">Upload 1–5 JPEG or PNG photos, up to 10 MB and 12 megapixels each. Show one clear, well-lit face per photo. Use the same name to add photos to an existing person.</p>
+              <button id="face-save" class="button primary" type="submit" disabled>Save faces for next run</button>
+            </fieldset>
+            <p id="enrollment-status" role="status"></p>
+          </form>
+        </section>
         </div>
         <aside class="monitor-side">
           <section class="panel priority-panel"><div class="panel-heading"><div><span class="section-index">02</span><h2>Latest alert</h2></div><span class="pulse-icon">↗</span></div><div id="latest-alert" class="latest-content"><span class="clear-icon">✓</span><h3>No alerts yet</h3><p>Suspicious activity will appear here as it is detected.</p></div></section>

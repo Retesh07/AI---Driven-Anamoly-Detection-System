@@ -12,9 +12,10 @@ numpy>=1.24.0
 scikit-learn>=1.3.0
 
 # Computer vision
-opencv-python>=4.8.0
+# Existing face detection uses the OpenCV 4 cascade API and bundled XML files.
+opencv-python>=4.8.0,<5
 # Optional but recommended for stronger face backends like YuNet
-# opencv-contrib-python>=4.8.0
+# opencv-contrib-python>=4.8.0,<5
 
 # Visualization and plotting
 matplotlib>=3.7.0

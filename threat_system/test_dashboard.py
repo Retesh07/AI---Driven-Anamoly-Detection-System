@@ -1,6 +1,7 @@
 """Run with: python3 -m unittest test_dashboard -v (no model dependencies)."""
 
 import json
+from pathlib import Path
 import threading
 import unittest
 from types import SimpleNamespace
@@ -114,6 +115,7 @@ class DashboardTests(unittest.TestCase):
     def test_cli_connects_live_pipeline_and_closes_server_on_failure(self):
         import main
         pipeline = Mock()
+        pipeline.face_db_path = Path("custom-faces")
         pipeline.process_realtime.side_effect = RuntimeError("camera disconnected")
         dashboard = Mock()
         dashboard.start.return_value = 8080
@@ -121,7 +123,7 @@ class DashboardTests(unittest.TestCase):
         argv = ["main.py", "--webcam", "--cpu", "--camera-source", "http://pi:8000/stream.mjpg", "--dashboard", "--headless"]
         with patch("sys.argv", argv), patch.dict("sys.modules", {"pipeline": SimpleNamespace(ThreatDetectionPipeline=Mock(return_value=pipeline))}), patch("dashboard.Dashboard", factory), patch("traceback.print_exc"), patch("builtins.print"):
             self.assertEqual(main.main(), 1)
-        factory.assert_called_once_with(source="http://pi:8000/stream.mjpg")
+        factory.assert_called_once_with(source="http://pi:8000/stream.mjpg", face_db_path=Path("custom-faces"))
         pipeline.process_realtime.assert_called_once_with(camera_source="http://pi:8000/stream.mjpg", output_dir="./results", violence_threshold=None, warning_threshold=None, dashboard=dashboard, headless=True)
         dashboard.stop.assert_called_once()
 

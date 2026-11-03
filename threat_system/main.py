@@ -103,7 +103,7 @@ Examples:
     try:
         if args.dashboard:
             from dashboard import Dashboard
-            dashboard = Dashboard(source=args.video or args.camera_source)
+            dashboard = Dashboard(source=args.video or args.camera_source, face_db_path=pipeline.face_db_path)
             port = dashboard.start(args.dashboard_host, args.dashboard_port)
             print(f'[Dashboard] http://{args.dashboard_host}:{port}')
         if args.video:

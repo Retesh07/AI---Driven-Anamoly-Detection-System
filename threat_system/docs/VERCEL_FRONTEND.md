@@ -82,6 +82,12 @@ dashboard server. A new connection starts a fresh in-memory alert session.
 
 ## Local testing
 
+The **Add a person** form uploads photos to the selected monitoring host's face
+database. Deploying a new frontend is not enough: pull the backend update and
+restart it to enable `/api/faces/enroll`. Photos persist on the host across runs;
+restart the pipeline (or disconnect/reconnect its camera) after enrollment to
+load them. See [face enrollment](ALERT_DASHBOARD.md#add-faces-from-the-frontend).
+
 Run `python3 dashboard.py` and open `http://127.0.0.1:8080`. Leave the monitoring
 URL empty and use the Pi field directly. For simulated alerts, add `--demo`;
 connecting a real gateway exits demo mode.

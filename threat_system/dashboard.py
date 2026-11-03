@@ -15,6 +15,8 @@ import uuid
 from urllib.parse import urlsplit
 
 from camera_gateway import check_gateway, gateway_origin, read_gateway_frame
+from constants import FACE_DB_PATH
+from face_enrollment import MAX_ENROLLMENT_BYTES, enroll_photos
 
 
 LEVELS = {"NORMAL": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
@@ -22,13 +24,15 @@ ASSETS = Path(__file__).resolve().parent.parent / "frontend"
 
 
 class Dashboard:
-    def __init__(self, source="0", demo=False, allow_connect=False, allowed_origins=(), access_token=""):
+    def __init__(self, source="0", demo=False, allow_connect=False, allowed_origins=(), access_token="", face_db_path=None):
         self.session_id = uuid.uuid4().hex
         self.source = str(source)
         self.demo = demo
         self.allow_connect = allow_connect
         self.allowed_origins = set(allowed_origins)
         self.access_token = access_token
+        self.face_db_path = Path(face_db_path) if face_db_path else Path(__file__).parent / FACE_DB_PATH
+        self._enroll_lock = threading.Lock()
         if self.allowed_origins and not access_token:
             raise ValueError("Set DASHBOARD_ACCESS_TOKEN before allowing a hosted frontend.")
         for origin in self.allowed_origins:
@@ -220,8 +224,19 @@ class Dashboard:
                 "preview_mode": self._preview_mode,
                 "connection": dict(self._connection),
                 "can_connect": self.allow_connect,
+                "can_enroll": not self.demo,
                 "control_token": self.control_token,
             }
+
+    def enroll_faces(self, payload):
+        if self.demo:
+            raise RuntimeError("Face enrollment requires a live monitoring host.")
+        if not self._enroll_lock.acquire(blocking=False):
+            raise RuntimeError("Another enrollment is in progress. Please wait and retry.")
+        try:
+            return enroll_photos(payload.get("name"), payload.get("photos"), self.face_db_path)
+        finally:
+            self._enroll_lock.release()
 
     def start(self, host="127.0.0.1", port=8080):
         self._server = ThreadingHTTPServer((host, port), partial(DashboardHandler, dashboard=self))
@@ -314,7 +329,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             pass
 
     def do_POST(self):
-        if self.path not in ("/api/gateway/connect", "/api/gateway/disconnect"):
+        if self.path not in ("/api/gateway/connect", "/api/gateway/disconnect", "/api/faces/enroll"):
             self.send_error(404)
             return
         if not self._authorize():
@@ -324,23 +339,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_error(403, "Use connection controls from this dashboard")
             return
         try:
+            enrolling = self.path == "/api/faces/enroll"
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 4096 or self.headers.get_content_type() != "application/json":
-                raise ValueError("Expected a JSON request of at most 4096 bytes.")
-            self.connection.settimeout(5)
+            limit = MAX_ENROLLMENT_BYTES if enrolling else 4096
+            if not 0 < length <= limit or self.headers.get_content_type() != "application/json":
+                raise ValueError(f"Expected a JSON request of at most {limit} bytes.")
+            self.connection.settimeout(30 if enrolling else 5)
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError("Expected a JSON object.")
-            if self.path.endswith("/connect"):
+            if enrolling:
+                body = json.dumps(self.dashboard.enroll_faces(payload)).encode()
+                status = 201
+            elif self.path.endswith("/connect"):
                 self.dashboard.connect_gateway(payload.get("address"))
             else:
                 self.dashboard.disconnect_gateway()
-            body = json.dumps({"status": "accepted"}).encode()
-            status = 202
+            if not enrolling:
+                body = json.dumps({"status": "accepted"}).encode()
+                status = 202
         except (ValueError, UnicodeError) as error:
             body, status = json.dumps({"error": str(error)}).encode(), 400
         except RuntimeError as error:
             body, status = json.dumps({"error": str(error)}).encode(), 409
+        except ImportError:
+            body, status = json.dumps({"error": "Face enrollment needs the host's inference Python environment with OpenCV, NumPy and Pillow installed."}).encode(), 503
+        except Exception:
+            body, status = json.dumps({"error": "Could not save face enrollment. Check the host's image dependencies and face database write permissions."}).encode(), 500
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

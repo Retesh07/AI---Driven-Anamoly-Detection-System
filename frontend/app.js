@@ -58,6 +58,19 @@ function peopleView(state, failed, now = Date.now() / 1000) {
   };
 }
 
+function validateEnrollment(name, files) {
+  const trimmed = name.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/.test(trimmed)) {
+    throw new Error("Use 1–64 letters, numbers, spaces, hyphens or underscores for the name.");
+  }
+  if (files.length < 1 || files.length > 5) throw new Error("Choose 1–5 JPEG or PNG photos.");
+  for (const file of files) {
+    if (!["image/jpeg", "image/png"].includes(file.type)) throw new Error("Photos must be JPEG or PNG images.");
+    if (!file.size || file.size > 10 * 1024 * 1024) throw new Error("Each photo must be at most 10 MB.");
+  }
+  return trimmed;
+}
+
 function startDashboard() {
   const $ = id => document.getElementById(id);
   const node = (tag, className, text) => {
@@ -86,6 +99,7 @@ function startDashboard() {
   let requestFailed = false;
   let lastRenderKey = null;
   let commandPending = false;
+  let enrollmentPending = false;
   let gatewayInputLoaded = false;
   let apiOrigin = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) ? location.origin : null;
   let accessKey = "";
@@ -198,6 +212,13 @@ function startDashboard() {
     $("people-rows").replaceChildren(rows);
     $("people-empty").hidden = people.persons.length > 0;
     $("people-empty").querySelector("p").textContent = people.available ? "No people in the latest processed frame." : "Waiting for face recognition results.";
+    $("face-save").disabled = enrollmentPending || requestFailed || !state?.can_enroll;
+    $("face-save").textContent = enrollmentPending ? "Saving faces…" : "Save faces for next run";
+    $("enrollment-fields").disabled = enrollmentPending;
+    $("enrollment-availability").textContent = requestFailed ? "Monitoring host disconnected. Reconnect before uploading."
+      : state?.can_enroll ? "Photos are saved on this monitoring host. Restart the pipeline after saving to load the new faces."
+      : state?.demo ? "Face enrollment requires a live monitoring host." : state ? "Update the monitoring host to enable photo uploads." : "Connect a monitoring host to add faces.";
+    ["monitoring-url", "monitoring-key", "monitoring-connect"].forEach(id => { $(id).disabled = enrollmentPending; });
     return { connected, cameraLive, frameAt };
   }
 
@@ -394,13 +415,50 @@ function startDashboard() {
   }
   $("gateway-form").addEventListener("submit", event => { event.preventDefault(); gatewayCommand("connect"); });
   $("gateway-disconnect").addEventListener("click", () => gatewayCommand("disconnect"));
+  $("enrollment-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (enrollmentPending || requestFailed || !state?.can_enroll) return;
+    const generation = hostGeneration;
+    const token = state.control_token;
+    try {
+      const files = [...$("face-photos").files];
+      const name = validateEnrollment($("face-name").value, files);
+      enrollmentPending = true;
+      $("enrollment-status").textContent = "Checking and saving photos on the monitoring host…";
+      renderConnection();
+      const photos = await Promise.all(files.map(file => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = () => reject(new Error("Could not read a selected photo. Select it again and retry."));
+        reader.readAsDataURL(file);
+      })));
+      if (generation !== hostGeneration) throw new Error("Monitoring host changed. Select the photos again.");
+      const response = await apiFetch("/api/faces/enroll", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-Sentinel-Token": token },
+        body: JSON.stringify({ name, photos }), signal: AbortSignal.timeout(120000),
+      });
+      if (response.status === 401) throw new Error("Access key rejected. Reconnect using the monitoring host's access key.");
+      if (response.status === 404) throw new Error("Update and restart the monitoring host to enable face enrollment.");
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Face enrollment failed.");
+      $("enrollment-status").textContent = `Saved ${result.saved} photo(s) for ${result.name}. ${result.skipped ? `${result.skipped} photo(s) were rejected. ` : ""}Restart the pipeline to recognize this person on the next run.`;
+      $("enrollment-form").reset();
+    } catch (error) {
+      $("enrollment-status").textContent = error.name === "TimeoutError" ? "Enrollment timed out. Check the host before retrying; it may still finish saving." : error.message || "Could not upload photos. Check the monitoring host connection.";
+    } finally {
+      enrollmentPending = false;
+      renderConnection();
+    }
+  });
   $("monitoring-form").addEventListener("submit", event => {
     event.preventDefault();
+    if (enrollmentPending) return;
     try {
       apiOrigin = monitoringOrigin($("monitoring-url").value, location.origin, location.protocol);
       accessKey = $("monitoring-key").value.trim();
       hostGeneration += 1;
       state = null;
+      $("enrollment-status").textContent = "";
       previousSession = null;
       requestFailed = false;
       hostError = "Connecting to monitoring host…";
@@ -436,4 +494,4 @@ function startDashboard() {
 }
 
 if (typeof document !== "undefined") startDashboard();
-if (typeof module !== "undefined") module.exports = { alertTitle, filterEvents, connectionView, monitoringOrigin, peopleView };
+if (typeof module !== "undefined") module.exports = { alertTitle, filterEvents, connectionView, monitoringOrigin, peopleView, validateEnrollment };
